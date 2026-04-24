@@ -44,13 +44,12 @@ test('vercel deployment config targets the php runtime and builds frontend asset
         );
 });
 
-test('vite only enables wayfinder generation during the dev server', function () {
+test('vite build config does not depend on the wayfinder vite plugin', function () {
     $viteConfig = file_get_contents(base_path('vite.config.ts'));
 
     expect($viteConfig)
         ->not->toBeFalse()
         ->and($viteConfig)
-        ->toContain('defineConfig(({ command }) => ({')
-        ->toContain("command === 'serve'")
-        ->toContain('wayfinder({');
+        ->not->toContain('@laravel/vite-plugin-wayfinder')
+        ->not->toContain('wayfinder({');
 });
