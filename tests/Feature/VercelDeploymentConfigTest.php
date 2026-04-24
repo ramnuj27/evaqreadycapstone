@@ -46,10 +46,18 @@ test('vercel deployment config targets the php runtime and builds frontend asset
 
 test('vite build config does not depend on the wayfinder vite plugin', function () {
     $viteConfig = file_get_contents(base_path('vite.config.ts'));
+    $packageConfig = json_decode(
+        (string) file_get_contents(base_path('package.json')),
+        true,
+        flags: JSON_THROW_ON_ERROR,
+    );
 
     expect($viteConfig)
         ->not->toBeFalse()
         ->and($viteConfig)
         ->not->toContain('@laravel/vite-plugin-wayfinder')
         ->not->toContain('wayfinder({');
+
+    expect($packageConfig['devDependencies'] ?? [])
+        ->not->toHaveKey('@laravel/vite-plugin-wayfinder');
 });
