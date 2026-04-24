@@ -1,0 +1,45 @@
+<?php
+
+test('vercel entrypoint delegates to the laravel public front controller', function () {
+    $entrypoint = file_get_contents(base_path('api/index.php'));
+
+    expect($entrypoint)
+        ->not->toBeFalse()
+        ->and($entrypoint)
+        ->toContain("require __DIR__.'/../public/index.php';");
+});
+
+test('vercel deployment config targets the php runtime and builds frontend assets', function () {
+    $vercelConfig = json_decode(
+        (string) file_get_contents(base_path('vercel.json')),
+        true,
+        flags: JSON_THROW_ON_ERROR,
+    );
+    $composerConfig = json_decode(
+        (string) file_get_contents(base_path('composer.json')),
+        true,
+        flags: JSON_THROW_ON_ERROR,
+    );
+
+    expect($vercelConfig['functions']['api/index.php']['runtime'])
+        ->toBe('vercel-php@0.9.0');
+
+    expect($vercelConfig['rewrites'][2]['destination'])
+        ->toBe('/api/index.php');
+
+    expect($vercelConfig['env']['LOG_CHANNEL'])
+        ->toBe('stderr');
+
+    expect($vercelConfig['env']['VIEW_COMPILED_PATH'])
+        ->toBe('/tmp/storage/framework/views');
+
+    expect($composerConfig['scripts'])
+        ->toHaveKey('vercel');
+
+    expect($composerConfig['scripts']['vercel'])
+        ->toContain(
+            '@php artisan config:clear --ansi',
+            'npm ci --include=dev',
+            'npm run build',
+        );
+});

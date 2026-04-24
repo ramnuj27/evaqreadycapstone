@@ -1,0 +1,32 @@
+{
+    "$schema": "https://openapi.vercel.sh/vercel.json",
+    "functions": {
+        "api/index.php": {
+            "runtime": "vercel-php@0.9.0",
+            "maxDuration": 60
+        }
+    },
+    "env": {
+        "APP_CONFIG_CACHE": "/tmp/bootstrap/cache/config.php",
+        "APP_EVENTS_CACHE": "/tmp/bootstrap/cache/events.php",
+        "APP_PACKAGES_CACHE": "/tmp/bootstrap/cache/packages.php",
+        "APP_ROUTES_CACHE": "/tmp/bootstrap/cache/routes.php",
+        "APP_SERVICES_CACHE": "/tmp/bootstrap/cache/services.php",
+        "LOG_CHANNEL": "stderr",
+        "VIEW_COMPILED_PATH": "/tmp/storage/framework/views"
+    },
+    "rewrites": [
+        {
+            "source": "^/(.*\\.(?:css|gif|ico|jpeg|jpg|js|json|map|mjs|png|svg|txt|webp|woff|woff2))$",
+            "destination": "/public/$1"
+        },
+        {
+            "source": "/",
+            "destination": "/api/index.php"
+        },
+        {
+            "source": "/:path*",
+            "destination": "/api/index.php"
+        }
+    ]
+}
