@@ -6,6 +6,8 @@ test('vercel entrypoint delegates to the laravel public front controller', funct
     expect($entrypoint)
         ->not->toBeFalse()
         ->and($entrypoint)
+        ->toContain('/tmp/bootstrap/cache')
+        ->toContain('/tmp/storage/framework/views')
         ->toContain("require __DIR__.'/../public/index.php';");
 });
 
