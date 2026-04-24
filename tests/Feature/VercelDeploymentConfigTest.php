@@ -45,6 +45,15 @@ test('vercel deployment config targets the php runtime and builds frontend asset
     expect($vercelConfig['env']['VIEW_COMPILED_PATH'])
         ->toBe('/tmp/storage/framework/views');
 
+    expect($vercelConfig['env'])
+        ->not->toHaveKeys([
+            'APP_CONFIG_CACHE',
+            'APP_EVENTS_CACHE',
+            'APP_PACKAGES_CACHE',
+            'APP_ROUTES_CACHE',
+            'APP_SERVICES_CACHE',
+        ]);
+
     expect($composerConfig['scripts'])
         ->toHaveKey('vercel');
 
