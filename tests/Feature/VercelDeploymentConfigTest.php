@@ -36,6 +36,9 @@ test('vercel deployment config targets the php runtime and builds frontend asset
     expect($vercelConfig['outputDirectory'])
         ->toBe('vercel-output');
 
+    expect($vercelConfig['rewrites'][0]['destination'])
+        ->toBe('/$1');
+
     expect($vercelConfig['rewrites'][2]['destination'])
         ->toBe('/api/index.php');
 

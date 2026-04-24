@@ -16,7 +16,7 @@
     "rewrites": [
         {
             "source": "^/(.*\\.(?:css|gif|ico|jpeg|jpg|js|json|map|mjs|png|svg|txt|webp|woff|woff2))$",
-            "destination": "/public/$1"
+            "destination": "/$1"
         },
         {
             "source": "/",
