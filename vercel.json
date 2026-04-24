@@ -1,6 +1,8 @@
 {
     "$schema": "https://openapi.vercel.sh/vercel.json",
-    "outputDirectory": "public",
+    "framework": null,
+    "buildCommand": "npm run build && rm -rf vercel-output && mkdir -p vercel-output && cp -R public/build vercel-output/build && find public -maxdepth 1 -type f ! -name 'index.php' -exec cp {} vercel-output/ \\;",
+    "outputDirectory": "vercel-output",
     "functions": {
         "api/index.php": {
             "runtime": "vercel-php@0.9.0",

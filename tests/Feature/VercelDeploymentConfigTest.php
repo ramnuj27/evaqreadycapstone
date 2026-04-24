@@ -24,8 +24,15 @@ test('vercel deployment config targets the php runtime and builds frontend asset
     expect($vercelConfig['functions']['api/index.php']['runtime'])
         ->toBe('vercel-php@0.9.0');
 
+    expect($vercelConfig['framework'])
+        ->toBeNull();
+
+    expect($vercelConfig['buildCommand'])
+        ->toContain('npm run build')
+        ->toContain("! -name 'index.php'");
+
     expect($vercelConfig['outputDirectory'])
-        ->toBe('public');
+        ->toBe('vercel-output');
 
     expect($vercelConfig['rewrites'][2]['destination'])
         ->toBe('/api/index.php');
