@@ -72,6 +72,7 @@
         ],
         "vercel": [
             "@php artisan config:clear --ansi",
+            "@php artisan wayfinder:generate --with-form --ansi",
             "npm ci --include=dev",
             "npm run build"
         ],
