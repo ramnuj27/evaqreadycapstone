@@ -30,9 +30,6 @@ test('vercel deployment config targets the php runtime and builds frontend asset
     expect($vercelConfig['env']['LOG_CHANNEL'])
         ->toBe('stderr');
 
-    expect($vercelConfig['env']['LARAVEL_SKIP_WAYFINDER_GENERATION'])
-        ->toBe('1');
-
     expect($vercelConfig['env']['VIEW_COMPILED_PATH'])
         ->toBe('/tmp/storage/framework/views');
 
@@ -42,18 +39,18 @@ test('vercel deployment config targets the php runtime and builds frontend asset
     expect($composerConfig['scripts']['vercel'])
         ->toContain(
             '@php artisan config:clear --ansi',
-            '@php artisan wayfinder:generate --with-form --ansi',
             'npm ci --include=dev',
             'npm run build',
         );
 });
 
-test('vite skips wayfinder generation when the vercel build flag is enabled', function () {
+test('vite only enables wayfinder generation during the dev server', function () {
     $viteConfig = file_get_contents(base_path('vite.config.ts'));
 
     expect($viteConfig)
         ->not->toBeFalse()
         ->and($viteConfig)
-        ->toContain("process.env.LARAVEL_SKIP_WAYFINDER_GENERATION !== '1'")
+        ->toContain('defineConfig(({ command }) => ({')
+        ->toContain("command === 'serve'")
         ->toContain('wayfinder({');
 });

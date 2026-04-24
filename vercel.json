@@ -9,7 +9,6 @@
     "env": {
         "APP_CONFIG_CACHE": "/tmp/bootstrap/cache/config.php",
         "APP_EVENTS_CACHE": "/tmp/bootstrap/cache/events.php",
-        "LARAVEL_SKIP_WAYFINDER_GENERATION": "1",
         "APP_PACKAGES_CACHE": "/tmp/bootstrap/cache/packages.php",
         "APP_ROUTES_CACHE": "/tmp/bootstrap/cache/routes.php",
         "APP_SERVICES_CACHE": "/tmp/bootstrap/cache/services.php",

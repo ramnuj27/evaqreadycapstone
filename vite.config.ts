@@ -5,10 +5,7 @@ import react from '@vitejs/plugin-react';
 import laravel from 'laravel-vite-plugin';
 import { defineConfig } from 'vite';
 
-const shouldGenerateWayfinderTypes =
-    process.env.LARAVEL_SKIP_WAYFINDER_GENERATION !== '1';
-
-export default defineConfig({
+export default defineConfig(({ command }) => ({
     plugins: [
         laravel({
             input: ['resources/css/app.css', 'resources/js/app.tsx'],
@@ -21,7 +18,7 @@ export default defineConfig({
             },
         }),
         tailwindcss(),
-        ...(shouldGenerateWayfinderTypes
+        ...(command === 'serve'
             ? [
                   wayfinder({
                       formVariants: true,
@@ -29,4 +26,4 @@ export default defineConfig({
               ]
             : []),
     ],
-});
+}));
