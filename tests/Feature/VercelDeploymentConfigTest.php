@@ -30,10 +30,7 @@ test('vercel deployment config targets the php runtime and builds frontend asset
         ->toBeNull();
 
     expect($vercelConfig['buildCommand'])
-        ->toContain('npm run build')
-        ->toContain('cp public/build/assets/app-*.css')
-        ->toContain('app-DwL8tcUk.css')
-        ->toContain("! -name 'index.php'");
+        ->toBe('npm run vercel-build');
 
     expect($vercelConfig['outputDirectory'])
         ->toBe('vercel-output');
