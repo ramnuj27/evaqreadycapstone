@@ -17,11 +17,6 @@ import {
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
-    MapboxStaticMap,
-    type MapboxOverlayMarker,
-    type MapboxPoint,
-} from '@/components/mapbox-static-map';
-import {
     bearingBetween,
     compassDirectionLabel,
     distanceKmBetween,
@@ -75,6 +70,11 @@ type UserPosition = {
     latitude: number;
     longitude: number;
     recordedAt: number;
+};
+
+type GeoPoint = {
+    latitude: number;
+    longitude: number;
 };
 
 type MiniMapTile = {
@@ -186,7 +186,7 @@ function openStreetMapTileUrl(x: number, y: number, zoom: number): string {
     return `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${clampedY}.png`;
 }
 
-function miniMapTilesForCenter(center: MapboxPoint): {
+function miniMapTilesForCenter(center: GeoPoint): {
     offsetX: number;
     offsetY: number;
     tiles: MiniMapTile[];
@@ -749,7 +749,7 @@ export default function ResidentEvacuationAr({
     const guidanceSource =
         location === null ? 'Waiting for My location' : 'Live GPS lock';
     const hasLiveLocation = location !== null;
-    const miniMapMapPoints: MapboxPoint[] = [
+    const miniMapTilePoints: GeoPoint[] = [
         ...(guidancePosition === null
             ? []
             : [
@@ -764,33 +764,11 @@ export default function ResidentEvacuationAr({
                   {
                       latitude: nearestCenter.latitude,
                       longitude: nearestCenter.longitude,
-                  },
-              ]),
-    ];
-    const miniMapMapMarkers: MapboxOverlayMarker[] = [
-        ...(guidancePosition === null
-            ? []
-            : [
-                  {
-                      color: '#2563eb',
-                      latitude: guidancePosition.latitude,
-                      longitude: guidancePosition.longitude,
-                      size: 'large' as const,
-                  },
-              ]),
-        ...(nearestCenter === null
-            ? []
-            : [
-                  {
-                      color: '#16a34a',
-                      latitude: nearestCenter.latitude,
-                      longitude: nearestCenter.longitude,
-                      size: 'medium' as const,
                   },
               ]),
     ];
     const miniMapTileCenter =
-        miniMapMapPoints[0] ?? miniMapMapPoints[1] ?? defaultMiniMapCenter;
+        miniMapTilePoints[0] ?? miniMapTilePoints[1] ?? defaultMiniMapCenter;
     const miniMapTileLayer = miniMapTilesForCenter(miniMapTileCenter);
     const miniMapTileLayerTransform = `translate(-${(miniMapTileSize + miniMapTileLayer.offsetX).toFixed(1)}px, -${(miniMapTileSize + miniMapTileLayer.offsetY).toFixed(1)}px)`;
     const isLocating = locationState === 'locating';
@@ -1539,16 +1517,6 @@ export default function ResidentEvacuationAr({
                                                         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(240,253,244,0.08)_0%,rgba(240,253,244,0.12)_55%,rgba(255,255,255,0.18)_100%)]" />
                                                     </div>
 
-                                                    <MapboxStaticMap
-                                                        className="scale-110 [object-position:center_54%] opacity-95 contrast-[1.02] saturate-[1.08]"
-                                                        markers={
-                                                            miniMapMapMarkers
-                                                        }
-                                                        points={
-                                                            miniMapMapPoints
-                                                        }
-                                                    />
-
                                                     <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.10)_0%,rgba(255,255,255,0.03)_45%,rgba(255,255,255,0.22)_100%)]" />
 
                                                     <div
@@ -1586,7 +1554,7 @@ export default function ResidentEvacuationAr({
                                                             <MapPinned className="size-6" />
                                                         </div>
                                                         <div className="max-w-40 rounded-full bg-green-600 px-3 py-1 text-center text-[11px] font-semibold text-white shadow-sm">
-                                                            Nearest center
+                                                            AR destination
                                                         </div>
                                                     </div>
 
