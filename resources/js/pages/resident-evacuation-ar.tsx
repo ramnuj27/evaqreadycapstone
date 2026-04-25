@@ -91,6 +91,11 @@ type DeviceOrientationPermissionRequester = typeof DeviceOrientationEvent & {
     requestPermission?: (absolute?: boolean) => Promise<'denied' | 'granted'>;
 };
 type CameraLensMode = 'fallback' | 'rear' | 'unknown';
+type OrientationPose = {
+    heading: number | null;
+    pitch: number | null;
+    roll: number | null;
+};
 
 const numberFormatter = new Intl.NumberFormat('en-PH');
 const arChevronSteps = [0, 1, 2] as const;
@@ -229,6 +234,74 @@ function compassAccuracyLabel(accuracy: number | null): string {
     }
 
     return 'Low';
+}
+
+function metersBetweenPoints(pointA: GeoPoint, pointB: GeoPoint): number {
+    return (
+        distanceKmBetween(
+            pointA.latitude,
+            pointA.longitude,
+            pointB.latitude,
+            pointB.longitude,
+        ) * 1000
+    );
+}
+
+function smoothLinearValue(
+    previousValue: number | null,
+    nextValue: number,
+    weight: number,
+): number {
+    if (previousValue === null) {
+        return nextValue;
+    }
+
+    return previousValue + (nextValue - previousValue) * weight;
+}
+
+function smoothHeadingValue(
+    previousHeading: number | null,
+    nextHeading: number,
+): number {
+    if (previousHeading === null) {
+        return nextHeading;
+    }
+
+    const headingDelta = shortestAngleDelta(previousHeading, nextHeading);
+    const weight = Math.abs(headingDelta) > 70 ? 0.42 : 0.18;
+
+    return normalizeDegrees(previousHeading + headingDelta * weight);
+}
+
+function stableLocationFromPosition(
+    previousLocation: UserPosition | null,
+    position: GeolocationPosition,
+): UserPosition {
+    const nextLocation = {
+        accuracy: position.coords.accuracy,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        recordedAt: position.timestamp,
+    };
+
+    if (previousLocation === null) {
+        return nextLocation;
+    }
+
+    const movementMeters = metersBetweenPoints(previousLocation, nextLocation);
+    const accuracyMeters =
+        nextLocation.accuracy ?? previousLocation.accuracy ?? 12;
+    const jitterThreshold = clamp(accuracyMeters * 0.35, 4, 18);
+
+    if (movementMeters <= jitterThreshold) {
+        return {
+            ...previousLocation,
+            accuracy: nextLocation.accuracy,
+            recordedAt: nextLocation.recordedAt,
+        };
+    }
+
+    return nextLocation;
 }
 
 function geolocationErrorMessage(error: GeolocationPositionError): string {
@@ -384,6 +457,11 @@ export default function ResidentEvacuationAr({
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const locationWatchIdRef = useRef<number | null>(null);
+    const orientationPoseRef = useRef<OrientationPose>({
+        heading: null,
+        pitch: null,
+        roll: null,
+    });
     const [cameraState, setCameraState] = useState<
         'error' | 'idle' | 'ready' | 'starting'
     >('idle');
@@ -447,12 +525,9 @@ export default function ResidentEvacuationAr({
 
         locationWatchIdRef.current = navigator.geolocation.watchPosition(
             (position) => {
-                setLocation({
-                    accuracy: position.coords.accuracy,
-                    latitude: position.coords.latitude,
-                    longitude: position.coords.longitude,
-                    recordedAt: position.timestamp,
-                });
+                setLocation((currentLocation) =>
+                    stableLocationFromPosition(currentLocation, position),
+                );
                 setLocationError(null);
                 setLocationState('ready');
             },
@@ -477,11 +552,25 @@ export default function ResidentEvacuationAr({
                 nextPose.roll !== null;
 
             if (nextPose.pitch !== null) {
-                setDevicePitch(nextPose.pitch);
+                const smoothPitch = smoothLinearValue(
+                    orientationPoseRef.current.pitch,
+                    nextPose.pitch,
+                    0.24,
+                );
+
+                orientationPoseRef.current.pitch = smoothPitch;
+                setDevicePitch(smoothPitch);
             }
 
             if (nextPose.roll !== null) {
-                setDeviceRoll(nextPose.roll);
+                const smoothRoll = smoothLinearValue(
+                    orientationPoseRef.current.roll,
+                    nextPose.roll,
+                    0.24,
+                );
+
+                orientationPoseRef.current.roll = smoothRoll;
+                setDeviceRoll(smoothRoll);
             }
 
             if (hasPoseSignal) {
@@ -492,7 +581,13 @@ export default function ResidentEvacuationAr({
                 return;
             }
 
-            setHeading(nextPose.heading);
+            const smoothHeading = smoothHeadingValue(
+                orientationPoseRef.current.heading,
+                nextPose.heading,
+            );
+
+            orientationPoseRef.current.heading = smoothHeading;
+            setHeading(smoothHeading);
             setHeadingAccuracy(nextPose.accuracy);
         },
     );
@@ -605,6 +700,11 @@ export default function ResidentEvacuationAr({
         setHeadingAccuracy(null);
         setDevicePitch(null);
         setDeviceRoll(null);
+        orientationPoseRef.current = {
+            heading: null,
+            pitch: null,
+            roll: null,
+        };
 
         try {
             stopCameraStream();
@@ -666,6 +766,11 @@ export default function ResidentEvacuationAr({
         setHeadingAccuracy(null);
         setDevicePitch(null);
         setDeviceRoll(null);
+        orientationPoseRef.current = {
+            heading: null,
+            pitch: null,
+            roll: null,
+        };
         setOrientationEnabled(false);
         setOrientationError(null);
         setCameraError(null);
@@ -749,6 +854,10 @@ export default function ResidentEvacuationAr({
     const guidanceSource =
         location === null ? 'Waiting for My location' : 'Live GPS lock';
     const hasLiveLocation = location !== null;
+    const miniMapCurrentPoint = {
+        x: 50,
+        y: 64,
+    };
     const miniMapTilePoints: GeoPoint[] = [
         ...(guidancePosition === null
             ? []
@@ -771,6 +880,15 @@ export default function ResidentEvacuationAr({
         miniMapTilePoints[0] ?? miniMapTilePoints[1] ?? defaultMiniMapCenter;
     const miniMapTileLayer = miniMapTilesForCenter(miniMapTileCenter);
     const miniMapTileLayerTransform = `translate(-${(miniMapTileSize + miniMapTileLayer.offsetX).toFixed(1)}px, -${(miniMapTileSize + miniMapTileLayer.offsetY).toFixed(1)}px)`;
+    const miniMapSurfaceTransform =
+        heading === null
+            ? 'scale(1.16)'
+            : `rotate(${-heading.toFixed(2)}deg) scale(1.16)`;
+    const miniMapSurfaceTransformOrigin = `${miniMapCurrentPoint.x}% ${miniMapCurrentPoint.y}%`;
+    const miniMapDestinationBearing =
+        heading !== null && bearingToCenter !== null
+            ? shortestAngleDelta(heading, bearingToCenter)
+            : bearingToCenter;
     const isLocating = locationState === 'locating';
     const hasTiltData = devicePitch !== null || deviceRoll !== null;
     const overlayPitch = clamp(devicePitch ?? 0, -40, 40);
@@ -801,24 +919,20 @@ export default function ResidentEvacuationAr({
                   x: nearestCenter.x,
                   y: nearestCenter.y,
               };
-    const miniMapCurrentPoint = {
-        x: 50,
-        y: 62,
-    };
     const miniMapDestinationPoint = (() => {
-        if (bearingToCenter !== null) {
-            const bearingRadians = (bearingToCenter * Math.PI) / 180;
+        if (miniMapDestinationBearing !== null) {
+            const bearingRadians = (miniMapDestinationBearing * Math.PI) / 180;
 
             return {
                 x: clamp(
                     miniMapCurrentPoint.x + Math.sin(bearingRadians) * 31,
-                    18,
-                    82,
+                    16,
+                    84,
                 ),
                 y: clamp(
                     miniMapCurrentPoint.y - Math.cos(bearingRadians) * 38,
                     16,
-                    58,
+                    88,
                 ),
             };
         }
@@ -828,14 +942,14 @@ export default function ResidentEvacuationAr({
                 x: clamp(
                     miniMapCurrentPoint.x +
                         (savedDestinationPoint.x - savedCurrentPoint.x) * 0.55,
-                    18,
-                    82,
+                    16,
+                    84,
                 ),
                 y: clamp(
                     miniMapCurrentPoint.y +
                         (savedDestinationPoint.y - savedCurrentPoint.y) * 0.55,
                     16,
-                    58,
+                    88,
                 ),
             };
         }
@@ -1214,7 +1328,7 @@ export default function ResidentEvacuationAr({
                                     </section>
 
                                     <section className="grid gap-4 2xl:grid-cols-[minmax(0,1.18fr)_340px]">
-                                        <div className="relative min-h-[720px] overflow-hidden rounded-[32px] border border-slate-200/70 bg-slate-950 shadow-[0_28px_80px_rgba(15,23,42,0.22)] dark:border-slate-800">
+                                        <div className="relative min-h-[640px] overflow-hidden rounded-[28px] border border-slate-200/70 bg-slate-950 shadow-[0_28px_80px_rgba(15,23,42,0.22)] sm:min-h-[700px] lg:min-h-[720px] dark:border-slate-800">
                                             <video
                                                 ref={videoRef}
                                                 autoPlay
@@ -1349,14 +1463,14 @@ export default function ResidentEvacuationAr({
                                                         </div>
                                                     </div>
 
-                                                    <div className="absolute inset-x-4 top-4 flex justify-center">
-                                                        <div className="rounded-[8px] bg-blue-600 px-8 py-4 text-center text-white shadow-[0_18px_40px_rgba(37,99,235,0.34)]">
-                                                            <p className="text-2xl leading-none font-bold tracking-tight">
+                                                    <div className="pointer-events-none absolute inset-x-4 top-[92px] z-20 flex justify-center sm:top-20">
+                                                        <div className="max-w-[min(92vw,520px)] rounded-[8px] bg-blue-600 px-5 py-3 text-center text-white shadow-[0_18px_40px_rgba(37,99,235,0.34)] sm:px-7 sm:py-4">
+                                                            <p className="text-lg leading-tight font-bold tracking-tight sm:text-2xl">
                                                                 {
                                                                     liveViewInstruction
                                                                 }
                                                             </p>
-                                                            <p className="mt-2 text-base font-medium text-blue-50">
+                                                            <p className="mt-2 text-sm font-medium text-blue-50 sm:text-base">
                                                                 {
                                                                     routeDistanceText
                                                                 }{' '}
@@ -1414,110 +1528,136 @@ export default function ResidentEvacuationAr({
                                                 </div>
                                             </div>
 
-                                            <div className="absolute inset-x-0 bottom-0 h-[300px] overflow-hidden">
-                                                <div className="absolute inset-x-[-7%] -bottom-[82px] h-[340px] overflow-hidden rounded-t-[999px] border-[10px] border-white bg-[#dff2e5] shadow-[0_-20px_60px_rgba(15,23,42,0.18)]">
+                                            <div className="absolute inset-x-0 bottom-0 h-[280px] overflow-hidden md:h-[300px]">
+                                                <div className="absolute inset-x-[-7%] -bottom-[74px] h-[322px] overflow-hidden rounded-t-[999px] border-[10px] border-white bg-[#dff2e5] shadow-[0_-20px_60px_rgba(15,23,42,0.18)] md:-bottom-[82px] md:h-[340px]">
                                                     <div
                                                         aria-hidden="true"
-                                                        className="absolute inset-0 bg-[#dff2e5]"
+                                                        className="absolute inset-0 transition-transform duration-300 ease-out"
+                                                        style={{
+                                                            transform:
+                                                                miniMapSurfaceTransform,
+                                                            transformOrigin:
+                                                                miniMapSurfaceTransformOrigin,
+                                                        }}
                                                     >
-                                                        {miniMapBlocks.map(
-                                                            (block) => (
-                                                                <div
-                                                                    key={block}
-                                                                    className={cn(
-                                                                        'absolute shadow-[inset_0_0_0_1px_rgba(16,185,129,0.10)]',
-                                                                        block,
-                                                                    )}
-                                                                />
-                                                            ),
-                                                        )}
-                                                        {miniMapWaterShapes.map(
-                                                            (shape) => (
-                                                                <div
-                                                                    key={shape}
-                                                                    className={cn(
-                                                                        'absolute shadow-[inset_0_0_0_2px_rgba(255,255,255,0.36)]',
-                                                                        shape,
-                                                                    )}
-                                                                />
-                                                            ),
-                                                        )}
-                                                        {miniMapRoadLines.map(
-                                                            (line) => (
-                                                                <div
-                                                                    key={line}
-                                                                    className={cn(
-                                                                        'absolute rounded-full bg-white shadow-[0_1px_5px_rgba(15,23,42,0.14)]',
-                                                                        line,
-                                                                    )}
-                                                                />
-                                                            ),
-                                                        )}
-                                                        {miniMapMinorRoadLines.map(
-                                                            (line) => (
-                                                                <div
-                                                                    key={line}
-                                                                    className={cn(
-                                                                        'absolute rounded-full bg-white/84 shadow-sm',
-                                                                        line,
-                                                                    )}
-                                                                />
-                                                            ),
-                                                        )}
-                                                        <div className="absolute top-[26%] left-[18%] h-2 w-[76%] rotate-[20deg] rounded-full bg-emerald-800/12" />
-                                                        <div className="absolute top-[5%] left-[34%] h-[88%] w-2 rotate-[-8deg] rounded-full bg-emerald-800/12" />
-                                                        <div className="absolute right-[10%] bottom-[26%] rounded-full bg-sky-200/90 px-3 py-1 text-[10px] font-semibold tracking-[0.16em] text-sky-900 uppercase shadow-sm">
-                                                            Mayo Bay
-                                                        </div>
-                                                        {miniMapRoadLabels.map(
-                                                            (road) => (
-                                                                <div
-                                                                    key={
-                                                                        road.label
-                                                                    }
-                                                                    className={cn(
-                                                                        'absolute rounded-full bg-white/72 px-2 py-0.5 text-[10px] font-semibold text-slate-500 shadow-sm',
-                                                                        road.className,
-                                                                    )}
-                                                                >
-                                                                    {road.label}
-                                                                </div>
-                                                            ),
-                                                        )}
-                                                    </div>
-
-                                                    <div
-                                                        aria-hidden="true"
-                                                        className="absolute inset-0 overflow-hidden bg-slate-100"
-                                                    >
-                                                        <div
-                                                            className="absolute top-1/2 left-1/2 grid grid-cols-3 opacity-95 saturate-[1.05]"
-                                                            style={{
-                                                                transform:
-                                                                    miniMapTileLayerTransform,
-                                                            }}
-                                                        >
-                                                            {miniMapTileLayer.tiles.map(
-                                                                (tile) => (
-                                                                    <img
+                                                        <div className="absolute inset-0 bg-[#dff2e5]">
+                                                            {miniMapBlocks.map(
+                                                                (block) => (
+                                                                    <div
                                                                         key={
-                                                                            tile.key
+                                                                            block
                                                                         }
-                                                                        src={
-                                                                            tile.url
-                                                                        }
-                                                                        alt=""
-                                                                        className="size-64 max-w-none"
-                                                                        loading="eager"
-                                                                        referrerPolicy="no-referrer"
+                                                                        className={cn(
+                                                                            'absolute shadow-[inset_0_0_0_1px_rgba(16,185,129,0.10)]',
+                                                                            block,
+                                                                        )}
                                                                     />
                                                                 ),
                                                             )}
+                                                            {miniMapWaterShapes.map(
+                                                                (shape) => (
+                                                                    <div
+                                                                        key={
+                                                                            shape
+                                                                        }
+                                                                        className={cn(
+                                                                            'absolute shadow-[inset_0_0_0_2px_rgba(255,255,255,0.36)]',
+                                                                            shape,
+                                                                        )}
+                                                                    />
+                                                                ),
+                                                            )}
+                                                            {miniMapRoadLines.map(
+                                                                (line) => (
+                                                                    <div
+                                                                        key={
+                                                                            line
+                                                                        }
+                                                                        className={cn(
+                                                                            'absolute rounded-full bg-white shadow-[0_1px_5px_rgba(15,23,42,0.14)]',
+                                                                            line,
+                                                                        )}
+                                                                    />
+                                                                ),
+                                                            )}
+                                                            {miniMapMinorRoadLines.map(
+                                                                (line) => (
+                                                                    <div
+                                                                        key={
+                                                                            line
+                                                                        }
+                                                                        className={cn(
+                                                                            'absolute rounded-full bg-white/84 shadow-sm',
+                                                                            line,
+                                                                        )}
+                                                                    />
+                                                                ),
+                                                            )}
+                                                            <div className="absolute top-[26%] left-[18%] h-2 w-[76%] rotate-[20deg] rounded-full bg-emerald-800/12" />
+                                                            <div className="absolute top-[5%] left-[34%] h-[88%] w-2 rotate-[-8deg] rounded-full bg-emerald-800/12" />
+                                                            <div className="absolute right-[10%] bottom-[26%] rounded-full bg-sky-200/90 px-3 py-1 text-[10px] font-semibold tracking-[0.16em] text-sky-900 uppercase shadow-sm">
+                                                                Mayo Bay
+                                                            </div>
+                                                            {miniMapRoadLabels.map(
+                                                                (road) => (
+                                                                    <div
+                                                                        key={
+                                                                            road.label
+                                                                        }
+                                                                        className={cn(
+                                                                            'absolute rounded-full bg-white/72 px-2 py-0.5 text-[10px] font-semibold text-slate-500 shadow-sm',
+                                                                            road.className,
+                                                                        )}
+                                                                    >
+                                                                        {
+                                                                            road.label
+                                                                        }
+                                                                    </div>
+                                                                ),
+                                                            )}
                                                         </div>
-                                                        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(240,253,244,0.08)_0%,rgba(240,253,244,0.12)_55%,rgba(255,255,255,0.18)_100%)]" />
-                                                    </div>
 
-                                                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.10)_0%,rgba(255,255,255,0.03)_45%,rgba(255,255,255,0.22)_100%)]" />
+                                                        <div
+                                                            aria-hidden="true"
+                                                            className="absolute inset-0 overflow-hidden bg-transparent"
+                                                        >
+                                                            <div
+                                                                className="absolute grid grid-cols-3 opacity-95 saturate-[1.05]"
+                                                                style={{
+                                                                    left: `${miniMapCurrentPoint.x}%`,
+                                                                    top: `${miniMapCurrentPoint.y}%`,
+                                                                    transform:
+                                                                        miniMapTileLayerTransform,
+                                                                }}
+                                                            >
+                                                                {miniMapTileLayer.tiles.map(
+                                                                    (tile) => (
+                                                                        <img
+                                                                            key={
+                                                                                tile.key
+                                                                            }
+                                                                            src={
+                                                                                tile.url
+                                                                            }
+                                                                            alt=""
+                                                                            className="size-64 max-w-none"
+                                                                            loading="eager"
+                                                                            referrerPolicy="no-referrer"
+                                                                            onError={(
+                                                                                event,
+                                                                            ) => {
+                                                                                event.currentTarget.style.visibility =
+                                                                                    'hidden';
+                                                                            }}
+                                                                        />
+                                                                    ),
+                                                                )}
+                                                            </div>
+                                                            <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(240,253,244,0.08)_0%,rgba(240,253,244,0.12)_55%,rgba(255,255,255,0.18)_100%)]" />
+                                                        </div>
+
+                                                        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.10)_0%,rgba(255,255,255,0.03)_45%,rgba(255,255,255,0.22)_100%)]" />
+                                                    </div>
 
                                                     <div
                                                         aria-hidden="true"
@@ -1527,14 +1667,16 @@ export default function ResidentEvacuationAr({
                                                     </div>
 
                                                     <div className="absolute top-[9%] right-[10%] rounded-full bg-white/88 px-3 py-1 text-xs font-bold text-slate-700 shadow-sm">
-                                                        Route overview
+                                                        {heading === null
+                                                            ? 'North-up map'
+                                                            : 'Heading-up map'}
                                                     </div>
 
                                                     {miniMapRoutePoints.map(
                                                         (point, index) => (
                                                             <span
                                                                 key={`route-dot-${miniMapRouteDots[index]}`}
-                                                                className="absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500 shadow-[0_2px_8px_rgba(37,99,235,0.42)]"
+                                                                className="absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500 shadow-[0_2px_8px_rgba(37,99,235,0.42)] transition-[top,left] duration-300 ease-out"
                                                                 style={{
                                                                     left: `${point.x}%`,
                                                                     top: `${point.y}%`,
@@ -1544,7 +1686,7 @@ export default function ResidentEvacuationAr({
                                                     )}
 
                                                     <div
-                                                        className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
+                                                        className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1 transition-[top,left] duration-300 ease-out"
                                                         style={{
                                                             left: `${miniMapDestinationPoint.x}%`,
                                                             top: `${miniMapDestinationPoint.y}%`,
@@ -1575,7 +1717,7 @@ export default function ResidentEvacuationAr({
                                                 </div>
                                             </div>
 
-                                            <div className="absolute inset-x-4 bottom-[230px] flex flex-col items-center gap-3 md:bottom-[248px]">
+                                            <div className="absolute inset-x-4 bottom-[214px] flex flex-col items-center gap-3 md:bottom-[248px]">
                                                 <div
                                                     aria-label="Be alert while walking"
                                                     className="rounded-full border border-white/86 bg-slate-950/54 px-5 py-3 text-white shadow-[0_12px_34px_rgba(15,23,42,0.28)] backdrop-blur-md"
