@@ -93,6 +93,7 @@ type DeviceOrientationPermissionRequester = typeof DeviceOrientationEvent & {
 type CameraLensMode = 'fallback' | 'rear' | 'unknown';
 type OrientationPose = {
     heading: number | null;
+    headingRecordedAt: number | null;
     pitch: number | null;
     roll: number | null;
 };
@@ -251,12 +252,19 @@ function smoothLinearValue(
     previousValue: number | null,
     nextValue: number,
     weight: number,
+    noiseFloor = 0,
 ): number {
     if (previousValue === null) {
         return nextValue;
     }
 
-    return previousValue + (nextValue - previousValue) * weight;
+    const valueDelta = nextValue - previousValue;
+
+    if (Math.abs(valueDelta) <= noiseFloor) {
+        return previousValue;
+    }
+
+    return previousValue + valueDelta * weight;
 }
 
 function smoothHeadingValue(
@@ -268,7 +276,13 @@ function smoothHeadingValue(
     }
 
     const headingDelta = shortestAngleDelta(previousHeading, nextHeading);
-    const weight = Math.abs(headingDelta) > 70 ? 0.42 : 0.18;
+    const absoluteDelta = Math.abs(headingDelta);
+
+    if (absoluteDelta <= 3.5) {
+        return previousHeading;
+    }
+
+    const weight = absoluteDelta > 95 ? 0.5 : absoluteDelta > 45 ? 0.28 : 0.1;
 
     return normalizeDegrees(previousHeading + headingDelta * weight);
 }
@@ -459,6 +473,7 @@ export default function ResidentEvacuationAr({
     const locationWatchIdRef = useRef<number | null>(null);
     const orientationPoseRef = useRef<OrientationPose>({
         heading: null,
+        headingRecordedAt: null,
         pitch: null,
         roll: null,
     });
@@ -555,7 +570,8 @@ export default function ResidentEvacuationAr({
                 const smoothPitch = smoothLinearValue(
                     orientationPoseRef.current.pitch,
                     nextPose.pitch,
-                    0.24,
+                    0.1,
+                    0.9,
                 );
 
                 orientationPoseRef.current.pitch = smoothPitch;
@@ -566,7 +582,8 @@ export default function ResidentEvacuationAr({
                 const smoothRoll = smoothLinearValue(
                     orientationPoseRef.current.roll,
                     nextPose.roll,
-                    0.24,
+                    0.1,
+                    0.9,
                 );
 
                 orientationPoseRef.current.roll = smoothRoll;
@@ -581,12 +598,33 @@ export default function ResidentEvacuationAr({
                 return;
             }
 
+            const previousHeading = orientationPoseRef.current.heading;
+            const now = performance.now();
+            const rawHeadingDelta =
+                previousHeading === null
+                    ? null
+                    : Math.abs(
+                          shortestAngleDelta(previousHeading, nextPose.heading),
+                      );
+
+            if (
+                rawHeadingDelta !== null &&
+                rawHeadingDelta < 18 &&
+                orientationPoseRef.current.headingRecordedAt !== null &&
+                now - orientationPoseRef.current.headingRecordedAt < 120
+            ) {
+                setHeadingAccuracy(nextPose.accuracy);
+
+                return;
+            }
+
             const smoothHeading = smoothHeadingValue(
-                orientationPoseRef.current.heading,
+                previousHeading,
                 nextPose.heading,
             );
 
             orientationPoseRef.current.heading = smoothHeading;
+            orientationPoseRef.current.headingRecordedAt = now;
             setHeading(smoothHeading);
             setHeadingAccuracy(nextPose.accuracy);
         },
@@ -702,6 +740,7 @@ export default function ResidentEvacuationAr({
         setDeviceRoll(null);
         orientationPoseRef.current = {
             heading: null,
+            headingRecordedAt: null,
             pitch: null,
             roll: null,
         };
@@ -768,6 +807,7 @@ export default function ResidentEvacuationAr({
         setDeviceRoll(null);
         orientationPoseRef.current = {
             heading: null,
+            headingRecordedAt: null,
             pitch: null,
             roll: null,
         };
@@ -901,9 +941,9 @@ export default function ResidentEvacuationAr({
             : Math.round(
                   Math.max(34, 126 - Math.min(routeDistanceKm * 22, 88)),
               );
-    const overlaySceneTransform = `rotateX(${(overlayPitch * -0.12).toFixed(2)}deg) rotateY(${(overlayRoll * 0.18).toFixed(2)}deg)`;
-    const depthHorizonTransform = `translate3d(0, ${(overlayPitch * 1.45).toFixed(1)}px, 44px) rotateX(${(64 - overlayPitch * 0.55).toFixed(2)}deg) rotateZ(${(-overlayRoll * 0.4).toFixed(2)}deg)`;
-    const arrowDiscTransform = `${arrowRotation === null ? '' : `rotateZ(${arrowRotation.toFixed(2)}deg) `}translate3d(0, ${(-overlayPitch * 0.75).toFixed(1)}px, 78px) rotateX(${(10 - overlayPitch * 0.28).toFixed(2)}deg) rotateY(${(overlayRoll * 0.45).toFixed(2)}deg)`;
+    const overlaySceneTransform = `rotateX(${(overlayPitch * -0.07).toFixed(2)}deg) rotateY(${(overlayRoll * 0.1).toFixed(2)}deg)`;
+    const depthHorizonTransform = `translate3d(0, ${(overlayPitch * 0.7).toFixed(1)}px, 44px) rotateX(${(64 - overlayPitch * 0.25).toFixed(2)}deg) rotateZ(${(-overlayRoll * 0.2).toFixed(2)}deg)`;
+    const arrowDiscTransform = `${arrowRotation === null ? '' : `rotateZ(${arrowRotation.toFixed(2)}deg) `}translate3d(0, ${(-overlayPitch * 0.35).toFixed(1)}px, 78px) rotateX(${(10 - overlayPitch * 0.12).toFixed(2)}deg) rotateY(${(overlayRoll * 0.18).toFixed(2)}deg)`;
     const destinationBeaconTransform = `translateX(calc(-50% + ${beaconOffsetX.toFixed(1)}px)) translateY(${(-overlayPitch * 0.9).toFixed(1)}px) translateZ(${beaconDepth}px)`;
     const savedCurrentPoint =
         arGuide.currentLocation === null
@@ -1488,7 +1528,7 @@ export default function ResidentEvacuationAr({
                                                         <div className="flex flex-col items-center [transform-style:preserve-3d]">
                                                             <div
                                                                 className={cn(
-                                                                    'relative flex items-center justify-center gap-1 text-white transition-transform duration-300 ease-out [transform-style:preserve-3d]',
+                                                                    'relative flex items-center justify-center gap-1 text-white transition-transform duration-500 ease-out [transform-style:preserve-3d]',
                                                                     arrowRotation ===
                                                                         null &&
                                                                         'opacity-80',
@@ -1532,7 +1572,7 @@ export default function ResidentEvacuationAr({
                                                 <div className="absolute inset-x-[-7%] -bottom-[74px] h-[322px] overflow-hidden rounded-t-[999px] border-[10px] border-white bg-[#dff2e5] shadow-[0_-20px_60px_rgba(15,23,42,0.18)] md:-bottom-[82px] md:h-[340px]">
                                                     <div
                                                         aria-hidden="true"
-                                                        className="absolute inset-0 transition-transform duration-300 ease-out"
+                                                        className="absolute inset-0 transition-transform duration-500 ease-out"
                                                         style={{
                                                             transform:
                                                                 miniMapSurfaceTransform,
