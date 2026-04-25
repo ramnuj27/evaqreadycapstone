@@ -326,6 +326,7 @@ test('resident ar page uses a workspace style guidance layout', function () {
             'Be alert while walking',
             'mini-map',
             'MapboxStaticMap',
+            'tile.openstreetmap.org',
             'Route overview',
             'Dahican Road',
             'Mayo Bay',

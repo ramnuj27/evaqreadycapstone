@@ -77,6 +77,11 @@ type UserPosition = {
     recordedAt: number;
 };
 
+type MiniMapTile = {
+    key: string;
+    url: string;
+};
+
 type DeviceOrientationEventWithCompass = DeviceOrientationEvent & {
     webkitCompassAccuracy?: number;
     webkitCompassHeading?: number;
@@ -89,9 +94,17 @@ type CameraLensMode = 'fallback' | 'rear' | 'unknown';
 
 const numberFormatter = new Intl.NumberFormat('en-PH');
 const arChevronSteps = [0, 1, 2] as const;
+const defaultMiniMapCenter = {
+    latitude: 6.9548,
+    longitude: 126.2282,
+};
 const depthGridLines = [0, 1, 2, 3, 4] as const;
 const depthVerticalLines = [0, 1, 2] as const;
+const maxWebMercatorLatitude = 85.05112878;
 const miniMapRouteDots = [0, 1, 2, 3, 4, 5, 6, 7] as const;
+const miniMapTileOffsets = [-1, 0, 1] as const;
+const miniMapTileSize = 256;
+const miniMapTileZoom = 15;
 const miniMapBlocks = [
     'left-[5%] top-[9%] h-20 w-36 rotate-[-18deg] rounded-[18px] bg-emerald-100/78',
     'left-[32%] top-[4%] h-24 w-44 rotate-[10deg] rounded-[22px] bg-lime-100/72',
@@ -136,6 +149,70 @@ function formatCount(value: number): string {
 
 function clamp(value: number, minimum: number, maximum: number): number {
     return Math.min(maximum, Math.max(minimum, value));
+}
+
+function normalizedLongitude(longitude: number): number {
+    return ((((longitude + 180) % 360) + 360) % 360) - 180;
+}
+
+function longitudeToTileX(longitude: number, zoom: number): number {
+    return ((normalizedLongitude(longitude) + 180) / 360) * 2 ** zoom;
+}
+
+function latitudeToTileY(latitude: number, zoom: number): number {
+    const clampedLatitude = clamp(
+        latitude,
+        -maxWebMercatorLatitude,
+        maxWebMercatorLatitude,
+    );
+    const latitudeRadians = (clampedLatitude * Math.PI) / 180;
+
+    return (
+        ((1 -
+            Math.log(
+                Math.tan(latitudeRadians) + 1 / Math.cos(latitudeRadians),
+            ) /
+                Math.PI) /
+            2) *
+        2 ** zoom
+    );
+}
+
+function openStreetMapTileUrl(x: number, y: number, zoom: number): string {
+    const tileCount = 2 ** zoom;
+    const wrappedX = ((x % tileCount) + tileCount) % tileCount;
+    const clampedY = clamp(y, 0, tileCount - 1);
+
+    return `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${clampedY}.png`;
+}
+
+function miniMapTilesForCenter(center: MapboxPoint): {
+    offsetX: number;
+    offsetY: number;
+    tiles: MiniMapTile[];
+} {
+    const tileX = longitudeToTileX(center.longitude, miniMapTileZoom);
+    const tileY = latitudeToTileY(center.latitude, miniMapTileZoom);
+    const centerTileX = Math.floor(tileX);
+    const centerTileY = Math.floor(tileY);
+    const offsetX = (tileX - centerTileX) * miniMapTileSize;
+    const offsetY = (tileY - centerTileY) * miniMapTileSize;
+
+    return {
+        offsetX,
+        offsetY,
+        tiles: miniMapTileOffsets.flatMap((yOffset) =>
+            miniMapTileOffsets.map((xOffset) => {
+                const x = centerTileX + xOffset;
+                const y = centerTileY + yOffset;
+
+                return {
+                    key: `${miniMapTileZoom}-${x}-${y}`,
+                    url: openStreetMapTileUrl(x, y, miniMapTileZoom),
+                };
+            }),
+        ),
+    };
 }
 
 function compassAccuracyLabel(accuracy: number | null): string {
@@ -712,6 +789,10 @@ export default function ResidentEvacuationAr({
                   },
               ]),
     ];
+    const miniMapTileCenter =
+        miniMapMapPoints[0] ?? miniMapMapPoints[1] ?? defaultMiniMapCenter;
+    const miniMapTileLayer = miniMapTilesForCenter(miniMapTileCenter);
+    const miniMapTileLayerTransform = `translate(-${(miniMapTileSize + miniMapTileLayer.offsetX).toFixed(1)}px, -${(miniMapTileSize + miniMapTileLayer.offsetY).toFixed(1)}px)`;
     const isLocating = locationState === 'locating';
     const hasTiltData = devicePitch !== null || deviceRoll !== null;
     const overlayPitch = clamp(devicePitch ?? 0, -40, 40);
@@ -1425,6 +1506,37 @@ export default function ResidentEvacuationAr({
                                                                 </div>
                                                             ),
                                                         )}
+                                                    </div>
+
+                                                    <div
+                                                        aria-hidden="true"
+                                                        className="absolute inset-0 overflow-hidden bg-slate-100"
+                                                    >
+                                                        <div
+                                                            className="absolute top-1/2 left-1/2 grid grid-cols-3 opacity-95 saturate-[1.05]"
+                                                            style={{
+                                                                transform:
+                                                                    miniMapTileLayerTransform,
+                                                            }}
+                                                        >
+                                                            {miniMapTileLayer.tiles.map(
+                                                                (tile) => (
+                                                                    <img
+                                                                        key={
+                                                                            tile.key
+                                                                        }
+                                                                        src={
+                                                                            tile.url
+                                                                        }
+                                                                        alt=""
+                                                                        className="size-64 max-w-none"
+                                                                        loading="eager"
+                                                                        referrerPolicy="no-referrer"
+                                                                    />
+                                                                ),
+                                                            )}
+                                                        </div>
+                                                        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(240,253,244,0.08)_0%,rgba(240,253,244,0.12)_55%,rgba(255,255,255,0.18)_100%)]" />
                                                     </div>
 
                                                     <MapboxStaticMap
