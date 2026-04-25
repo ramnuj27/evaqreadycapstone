@@ -3,6 +3,7 @@ import {
     ArrowLeft,
     ArrowUp,
     Camera,
+    ChevronRight,
     Compass,
     LocateFixed,
     MapPinned,
@@ -11,6 +12,7 @@ import {
     RotateCcw,
     ShieldCheck,
     TriangleAlert,
+    Volume2,
 } from 'lucide-react';
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -81,8 +83,15 @@ type DeviceOrientationPermissionRequester = typeof DeviceOrientationEvent & {
 type CameraLensMode = 'fallback' | 'rear' | 'unknown';
 
 const numberFormatter = new Intl.NumberFormat('en-PH');
+const arChevronSteps = [0, 1, 2] as const;
 const depthGridLines = [0, 1, 2, 3, 4] as const;
 const depthVerticalLines = [0, 1, 2] as const;
+const miniMapRouteDots = [0, 1, 2, 3, 4, 5, 6, 7] as const;
+const miniMapRoadLines = [
+    'left-[8%] top-[30%] h-1 w-[45%] -rotate-[18deg]',
+    'left-[28%] top-[55%] h-1 w-[60%] rotate-[8deg]',
+    'left-[58%] top-[22%] h-1 w-[38%] rotate-[62deg]',
+] as const;
 
 function formatCount(value: number): string {
     return numberFormatter.format(value);
@@ -121,9 +130,7 @@ function geolocationErrorMessage(error: GeolocationPositionError): string {
     }
 }
 
-function orientationPoseFromEvent(
-    event: DeviceOrientationEventWithCompass,
-): {
+function orientationPoseFromEvent(event: DeviceOrientationEventWithCompass): {
     accuracy: number | null;
     heading: number | null;
     pitch: number | null;
@@ -225,8 +232,9 @@ async function requestPreferredCameraStream(): Promise<{
 
     for (const attempt of attempts) {
         try {
-            const stream =
-                await navigator.mediaDevices.getUserMedia(attempt.constraints);
+            const stream = await navigator.mediaDevices.getUserMedia(
+                attempt.constraints,
+            );
             const [videoTrack] = stream.getVideoTracks();
             const facingMode = videoTrack?.getSettings().facingMode;
             const lensMode =
@@ -615,6 +623,15 @@ export default function ResidentEvacuationAr({
             ? (nearestCenter?.etaMinutes ?? null)
             : estimateTravelMinutes(routeDistanceKm);
     const guidanceInstruction = turnInstruction(arrowRotation);
+    const liveViewInstruction =
+        arrowRotation === null ? 'Continue this way' : guidanceInstruction;
+    const routeDistanceText =
+        routeDistanceKm === null
+            ? (nearestCenter?.distanceKm ?? 'Distance pending')
+            : distanceLabel(routeDistanceKm);
+    const routeEtaText =
+        routeMinutes === null ? 'ETA pending' : `${routeMinutes} min`;
+    const destinationLabel = nearestCenter?.name ?? 'Evacuation Center';
     const guidanceSource =
         location === null ? 'Waiting for My location' : 'Live GPS lock';
     const hasLiveLocation = location !== null;
@@ -627,25 +644,100 @@ export default function ResidentEvacuationAr({
     const beaconDepth =
         routeDistanceKm === null
             ? 76
-            : Math.round(Math.max(34, 126 - Math.min(routeDistanceKm * 22, 88)));
+            : Math.round(
+                  Math.max(34, 126 - Math.min(routeDistanceKm * 22, 88)),
+              );
     const overlaySceneTransform = `rotateX(${(overlayPitch * -0.12).toFixed(2)}deg) rotateY(${(overlayRoll * 0.18).toFixed(2)}deg)`;
     const depthHorizonTransform = `translate3d(0, ${(overlayPitch * 1.45).toFixed(1)}px, 44px) rotateX(${(64 - overlayPitch * 0.55).toFixed(2)}deg) rotateZ(${(-overlayRoll * 0.4).toFixed(2)}deg)`;
     const arrowDiscTransform = `${arrowRotation === null ? '' : `rotateZ(${arrowRotation.toFixed(2)}deg) `}translate3d(0, ${(-overlayPitch * 0.75).toFixed(1)}px, 78px) rotateX(${(10 - overlayPitch * 0.28).toFixed(2)}deg) rotateY(${(overlayRoll * 0.45).toFixed(2)}deg)`;
     const destinationBeaconTransform = `translateX(calc(-50% + ${beaconOffsetX.toFixed(1)}px)) translateY(${(-overlayPitch * 0.9).toFixed(1)}px) translateZ(${beaconDepth}px)`;
+    const savedCurrentPoint =
+        arGuide.currentLocation === null
+            ? null
+            : {
+                  x: arGuide.currentLocation.x,
+                  y: arGuide.currentLocation.y,
+              };
+    const savedDestinationPoint =
+        nearestCenter === null
+            ? null
+            : {
+                  x: nearestCenter.x,
+                  y: nearestCenter.y,
+              };
+    const miniMapCurrentPoint = {
+        x: 50,
+        y: 70,
+    };
+    const miniMapDestinationPoint = (() => {
+        if (bearingToCenter !== null) {
+            const bearingRadians = (bearingToCenter * Math.PI) / 180;
+
+            return {
+                x: clamp(
+                    miniMapCurrentPoint.x + Math.sin(bearingRadians) * 31,
+                    18,
+                    82,
+                ),
+                y: clamp(
+                    miniMapCurrentPoint.y - Math.cos(bearingRadians) * 42,
+                    16,
+                    70,
+                ),
+            };
+        }
+
+        if (savedCurrentPoint !== null && savedDestinationPoint !== null) {
+            return {
+                x: clamp(
+                    miniMapCurrentPoint.x +
+                        (savedDestinationPoint.x - savedCurrentPoint.x) * 0.55,
+                    18,
+                    82,
+                ),
+                y: clamp(
+                    miniMapCurrentPoint.y +
+                        (savedDestinationPoint.y - savedCurrentPoint.y) * 0.55,
+                    16,
+                    70,
+                ),
+            };
+        }
+
+        return {
+            x: 50,
+            y: 30,
+        };
+    })();
+    const miniMapRoutePointDenominator = Math.max(
+        miniMapRouteDots.length - 1,
+        1,
+    );
+    const miniMapRoutePoints = miniMapRouteDots.map((dot) => {
+        const progress = dot / miniMapRoutePointDenominator;
+
+        return {
+            x:
+                miniMapCurrentPoint.x +
+                (miniMapDestinationPoint.x - miniMapCurrentPoint.x) * progress,
+            y:
+                miniMapCurrentPoint.y +
+                (miniMapDestinationPoint.y - miniMapCurrentPoint.y) * progress,
+        };
+    });
     const cameraLensLabel =
         cameraLensMode === 'rear'
             ? 'Rear camera active'
             : cameraLensMode === 'fallback'
               ? 'Fallback camera active'
               : 'Camera lens pending';
-    const tiltStatusLabel =
-        hasTiltData
-            ? `Pitch ${Math.round(overlayPitch)} deg / Roll ${Math.round(overlayRoll)} deg`
-            : orientationError !== null
-              ? 'Tilt unavailable'
-              : orientationEnabled
-                ? 'Move phone to sync tilt'
-                : 'Allow motion access';
+    const tiltStatusLabel = hasTiltData
+        ? `Pitch ${Math.round(overlayPitch)} deg / Roll ${Math.round(overlayRoll)} deg`
+        : orientationError !== null
+          ? 'Tilt unavailable'
+          : orientationEnabled
+            ? 'Move phone to sync tilt'
+            : 'Allow motion access';
     const compassStatusDetail =
         heading !== null
             ? `${compassDirectionLabel(heading)} heading with ${compassAccuracyLabel(headingAccuracy)} confidence.`
@@ -654,19 +746,18 @@ export default function ResidentEvacuationAr({
               : hasTiltData
                 ? 'Tilt is active, but compass heading is still unavailable. Rotate the phone slowly to calibrate.'
                 : 'Waiting for compass permission or calibration.';
-    const depthStatusDetail =
-        hasTiltData
-            ? `3D depth follows phone tilt with pitch ${Math.round(overlayPitch)} deg and roll ${Math.round(overlayRoll)} deg.`
-            : orientationError !== null
-              ? orientationError
-              : '3D depth is waiting for tilt data from your phone sensors.';
+    const depthStatusDetail = hasTiltData
+        ? `3D depth follows phone tilt with pitch ${Math.round(overlayPitch)} deg and roll ${Math.round(overlayRoll)} deg.`
+        : orientationError !== null
+          ? orientationError
+          : '3D depth is waiting for tilt data from your phone sensors.';
     const systemReadiness = [
         {
             detail:
                 cameraState === 'ready'
                     ? cameraLensMode === 'fallback'
-                      ? 'The device fell back to its available camera because a rear lens was not exposed.'
-                      : 'Rear camera feed is active.'
+                        ? 'The device fell back to its available camera because a rear lens was not exposed.'
+                        : 'Rear camera feed is active.'
                     : 'Camera is waiting for permission.',
             isReady: cameraState === 'ready',
             label: 'Camera',
@@ -697,14 +788,13 @@ export default function ResidentEvacuationAr({
     const readySystemCount = systemReadiness.filter(
         (system) => system.isReady,
     ).length;
-    const fieldControlMessage =
-        hasLiveLocation
-            ? 'Live location locked. You can open or restart the AR camera now.'
-            : locationError !== null
-              ? locationError
-              : isLocating
-                ? 'Waiting for a live GPS lock before the AR workspace appears.'
-                : 'Tap My location first so the guide follows your current position.';
+    const fieldControlMessage = hasLiveLocation
+        ? 'Live location locked. You can open or restart the AR camera now.'
+        : locationError !== null
+          ? locationError
+          : isLocating
+            ? 'Waiting for a live GPS lock before the AR workspace appears.'
+            : 'Tap My location first so the guide follows your current position.';
     const lastLocationMessage =
         location !== null
             ? `Live update captured at ${new Intl.DateTimeFormat('en-PH', {
@@ -725,8 +815,8 @@ export default function ResidentEvacuationAr({
             detail:
                 heading === null
                     ? orientationError !== null
-                      ? orientationError
-                      : 'Keep the phone upright and rotate slowly if the arrow is waiting for calibration.'
+                        ? orientationError
+                        : 'Keep the phone upright and rotate slowly if the arrow is waiting for calibration.'
                     : `Current heading is ${compassDirectionLabel(heading)} with ${compassAccuracyLabel(headingAccuracy)} accuracy.`,
             icon: Compass,
             label: 'Compass Status',
@@ -819,7 +909,7 @@ export default function ResidentEvacuationAr({
                                                 ? 'Locating'
                                                 : hasLiveLocation
                                                   ? 'Locked'
-                                              : 'Standby'}
+                                                  : 'Standby'}
                                     </div>
                                 </div>
 
@@ -849,7 +939,11 @@ export default function ResidentEvacuationAr({
                                     </Button>
                                     <Button
                                         type="button"
-                                        variant={hasLiveLocation ? 'default' : 'outline'}
+                                        variant={
+                                            hasLiveLocation
+                                                ? 'default'
+                                                : 'outline'
+                                        }
                                         className={cn(
                                             'justify-start rounded-[18px]',
                                             hasLiveLocation
@@ -955,13 +1049,14 @@ export default function ResidentEvacuationAr({
                                                     Live Guidance Stage
                                                 </p>
                                                 <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                                                    Real-time route and destination
-                                                    tracking
+                                                    Real-time route and
+                                                    destination tracking
                                                 </h2>
                                                 <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                                                    Keep the phone upright while the
-                                                    workspace tracks camera, compass,
-                                                    and your current route snapshot.
+                                                    Keep the phone upright while
+                                                    the workspace tracks camera,
+                                                    compass, and your current
+                                                    route snapshot.
                                                 </p>
                                             </div>
 
@@ -983,7 +1078,7 @@ export default function ResidentEvacuationAr({
                                     </section>
 
                                     <section className="grid gap-4 2xl:grid-cols-[minmax(0,1.18fr)_340px]">
-                                        <div className="relative min-h-[640px] overflow-hidden rounded-[32px] border border-slate-200/70 bg-slate-950 shadow-[0_28px_80px_rgba(15,23,42,0.22)] dark:border-slate-800">
+                                        <div className="relative min-h-[720px] overflow-hidden rounded-[32px] border border-slate-200/70 bg-slate-950 shadow-[0_28px_80px_rgba(15,23,42,0.22)] dark:border-slate-800">
                                             <video
                                                 ref={videoRef}
                                                 autoPlay
@@ -997,44 +1092,62 @@ export default function ResidentEvacuationAr({
                                                 )}
                                             />
 
-                                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(14,165,233,0.10),transparent_28%),linear-gradient(180deg,rgba(2,6,23,0.34)_0%,rgba(2,6,23,0.04)_35%,rgba(2,6,23,0.58)_100%)]" />
+                                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.20),transparent_34%),linear-gradient(180deg,rgba(96,165,250,0.24)_0%,rgba(15,23,42,0.04)_36%,rgba(15,23,42,0.30)_100%)]" />
+                                            <div
+                                                className={cn(
+                                                    'absolute inset-0 transition-opacity duration-300',
+                                                    cameraState === 'ready'
+                                                        ? 'opacity-0'
+                                                        : 'opacity-100',
+                                                )}
+                                            >
+                                                <div className="absolute inset-0 bg-[linear-gradient(180deg,#c7e7f7_0%,#d9f2d8_38%,#6b7280_39%,#8b949e_100%)]" />
+                                                <div className="absolute top-[34%] left-1/2 h-[72%] w-[54%] -translate-x-1/2 rounded-t-[100%] bg-[linear-gradient(90deg,#757d87_0%,#9aa2ac_50%,#737b86_100%)] shadow-[0_-20px_90px_rgba(15,23,42,0.18)]" />
+                                                <div className="absolute top-[22%] left-[3%] h-[30%] w-[36%] rounded-full bg-emerald-500/35 blur-2xl" />
+                                                <div className="absolute top-[17%] right-[8%] h-[34%] w-[34%] rounded-full bg-lime-500/30 blur-2xl" />
+                                            </div>
 
                                             {cameraState !== 'ready' ? (
-                                                <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
-                                                    <div className="rounded-full border border-white/10 bg-white/8 p-6 text-white shadow-[0_0_44px_rgba(56,189,248,0.24)] backdrop-blur-md">
+                                                <div className="absolute inset-x-6 top-[22%] z-20 mx-auto flex max-w-xl flex-col items-center rounded-[28px] border border-white/16 bg-slate-950/58 px-6 py-7 text-center text-white shadow-[0_24px_70px_rgba(15,23,42,0.28)] backdrop-blur-md">
+                                                    <div className="rounded-full border border-white/10 bg-white/8 p-5 shadow-[0_0_44px_rgba(56,189,248,0.24)]">
                                                         <Camera className="size-14" />
                                                     </div>
                                                     <h3 className="mt-6 text-2xl font-semibold text-white">
-                                                        Start the camera for live arrow
-                                                        guidance
+                                                        Start the camera for
+                                                        Live View
                                                     </h3>
                                                     <p className="mt-3 max-w-xl text-sm leading-7 text-slate-200">
-                                                        Your live GPS lock is ready.
-                                                        Start the camera to overlay
-                                                        the arrow, depth grid, and
-                                                        3D-style AR layer on top of
-                                                        the route workspace.
+                                                        Your live GPS lock is
+                                                        ready. Start the camera
+                                                        to place the turn card,
+                                                        blue arrows, and bottom
+                                                        mini-map over your
+                                                        surroundings.
                                                     </p>
                                                 </div>
                                             ) : null}
 
-                                            <div className="absolute inset-x-4 top-4 flex flex-wrap items-center justify-between gap-3">
-                                                <div className="flex flex-wrap gap-3">
-                                                    <div className="rounded-full border border-cyan-300/18 bg-slate-950/58 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md">
+                                            <div className="absolute inset-x-4 top-4 z-30 flex items-start justify-between gap-3">
+                                                <div className="flex flex-col gap-2">
+                                                    <div className="w-fit rounded-full border border-cyan-300/18 bg-slate-950/58 px-4 py-2 text-sm font-semibold text-white backdrop-blur-md">
                                                         3D AR depth overlay
                                                     </div>
-                                                    <div className="rounded-full border border-white/10 bg-slate-950/54 px-4 py-2 text-sm text-slate-200 backdrop-blur-md">
-                                                        {cameraLensLabel}
-                                                    </div>
-                                                    <div className="rounded-full border border-white/10 bg-slate-950/54 px-4 py-2 text-sm text-slate-200 backdrop-blur-md">
-                                                        {tiltStatusLabel}
+                                                    <div className="hidden flex-wrap gap-2 lg:flex">
+                                                        <div className="rounded-full border border-white/10 bg-slate-950/54 px-4 py-2 text-sm text-slate-200 backdrop-blur-md">
+                                                            {cameraLensLabel}
+                                                        </div>
+                                                        <div className="rounded-full border border-white/10 bg-slate-950/54 px-4 py-2 text-sm text-slate-200 backdrop-blur-md">
+                                                            {tiltStatusLabel}
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                <div className="rounded-full border border-white/10 bg-slate-950/54 px-4 py-2 text-sm text-slate-200 backdrop-blur-md">
-                                                    {readySystemCount}/
-                                                    {systemReadiness.length} systems
-                                                    ready
-                                                </div>
+                                                <button
+                                                    type="button"
+                                                    className="flex size-14 items-center justify-center rounded-full border border-white/70 bg-white/92 text-slate-800 shadow-[0_12px_35px_rgba(15,23,42,0.24)] backdrop-blur-md"
+                                                    aria-label="Play spoken guidance"
+                                                >
+                                                    <Volume2 className="size-7" />
+                                                </button>
                                             </div>
 
                                             <div className="absolute inset-0 overflow-hidden [perspective:1200px]">
@@ -1046,22 +1159,24 @@ export default function ResidentEvacuationAr({
                                                     }}
                                                 >
                                                     <div
-                                                        className="absolute inset-x-[9%] top-[23%] h-48 rounded-[36px] border border-cyan-300/15 bg-[linear-gradient(180deg,rgba(56,189,248,0.24)_0%,rgba(8,47,73,0.18)_34%,rgba(2,6,23,0.02)_100%)] shadow-[0_0_70px_rgba(8,145,178,0.14)] [transform-origin:center_center] [transform-style:preserve-3d]"
+                                                        className="absolute inset-x-[9%] top-[28%] h-48 [transform-origin:center_center] rounded-[36px] border border-cyan-300/10 bg-[linear-gradient(180deg,rgba(56,189,248,0.14)_0%,rgba(8,47,73,0.10)_34%,rgba(2,6,23,0.02)_100%)] shadow-[0_0_70px_rgba(8,145,178,0.10)] [transform-style:preserve-3d]"
                                                         style={{
                                                             transform:
                                                                 depthHorizonTransform,
                                                         }}
                                                     >
                                                         <div className="absolute inset-0 rounded-[36px] bg-[radial-gradient(circle_at_center,rgba(125,211,252,0.12),transparent_55%)]" />
-                                                        {depthGridLines.map((line) => (
-                                                            <div
-                                                                key={`depth-grid-${line}`}
-                                                                className="absolute inset-x-6 border-t border-cyan-200/22"
-                                                                style={{
-                                                                    top: `${18 + line * 17}%`,
-                                                                }}
-                                                            />
-                                                        ))}
+                                                        {depthGridLines.map(
+                                                            (line) => (
+                                                                <div
+                                                                    key={`depth-grid-${line}`}
+                                                                    className="absolute inset-x-6 border-t border-cyan-200/22"
+                                                                    style={{
+                                                                        top: `${18 + line * 17}%`,
+                                                                    }}
+                                                                />
+                                                            ),
+                                                        )}
                                                         {depthVerticalLines.map(
                                                             (line) => (
                                                                 <div
@@ -1074,11 +1189,11 @@ export default function ResidentEvacuationAr({
                                                             ),
                                                         )}
                                                         <div className="absolute inset-x-10 top-[44%] h-px bg-cyan-100/52 shadow-[0_0_18px_rgba(125,211,252,0.35)]" />
-                                                        <div className="absolute left-1/2 top-[44%] h-8 w-px -translate-x-1/2 bg-cyan-100/45 shadow-[0_0_18px_rgba(125,211,252,0.35)]" />
+                                                        <div className="absolute top-[44%] left-1/2 h-8 w-px -translate-x-1/2 bg-cyan-100/45 shadow-[0_0_18px_rgba(125,211,252,0.35)]" />
                                                     </div>
 
                                                     <div
-                                                        className="absolute left-1/2 top-[18%] [transform-style:preserve-3d]"
+                                                        className="absolute top-[16%] left-1/2 [transform-style:preserve-3d]"
                                                         style={{
                                                             transform:
                                                                 destinationBeaconTransform,
@@ -1088,17 +1203,42 @@ export default function ResidentEvacuationAr({
                                                             <div className="absolute size-28 rounded-full bg-cyan-400/18 blur-2xl" />
                                                             <div className="absolute size-16 rounded-full border border-cyan-200/35 bg-cyan-300/12 blur-sm" />
                                                             <div className="absolute h-24 w-px bg-gradient-to-b from-cyan-100 via-cyan-300/60 to-transparent" />
-                                                            <div className="relative rounded-full border border-cyan-100/40 bg-slate-950/65 px-4 py-2 text-xs font-semibold tracking-[0.18em] text-cyan-50 uppercase backdrop-blur-md shadow-[0_18px_40px_rgba(6,182,212,0.24)]">
-                                                                Destination beacon
+                                                            <div
+                                                                aria-label="Destination beacon"
+                                                                className="relative rounded-full border border-cyan-100/40 bg-slate-950/65 px-4 py-2 text-xs font-semibold tracking-[0.18em] text-cyan-50 uppercase shadow-[0_18px_40px_rgba(6,182,212,0.24)] backdrop-blur-md"
+                                                            >
+                                                                Destination
+                                                                beacon
                                                             </div>
                                                         </div>
                                                     </div>
 
-                                                    <div className="absolute inset-0 flex items-center justify-center px-6">
+                                                    <div className="absolute inset-x-4 top-4 flex justify-center">
+                                                        <div className="rounded-[8px] bg-blue-600 px-8 py-4 text-center text-white shadow-[0_18px_40px_rgba(37,99,235,0.34)]">
+                                                            <p className="text-2xl leading-none font-bold tracking-tight">
+                                                                {
+                                                                    liveViewInstruction
+                                                                }
+                                                            </p>
+                                                            <p className="mt-2 text-base font-medium text-blue-50">
+                                                                {
+                                                                    routeDistanceText
+                                                                }{' '}
+                                                                away
+                                                            </p>
+                                                            <p className="mt-1 max-w-64 truncate text-xs font-medium text-blue-100/85">
+                                                                {
+                                                                    destinationLabel
+                                                                }
+                                                            </p>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="absolute inset-0 flex items-center justify-center px-6 pb-16">
                                                         <div className="flex flex-col items-center [transform-style:preserve-3d]">
                                                             <div
                                                                 className={cn(
-                                                                    'relative flex size-44 items-center justify-center rounded-full border border-white/20 bg-white/12 text-white shadow-[0_0_60px_rgba(56,189,248,0.30)] backdrop-blur-md transition-transform duration-300 ease-out [transform-style:preserve-3d] sm:size-56',
+                                                                    'relative flex items-center justify-center gap-1 text-white transition-transform duration-300 ease-out [transform-style:preserve-3d]',
                                                                     arrowRotation ===
                                                                         null &&
                                                                         'opacity-80',
@@ -1108,62 +1248,139 @@ export default function ResidentEvacuationAr({
                                                                         arrowDiscTransform,
                                                                 }}
                                                             >
-                                                                <div className="absolute inset-4 rounded-full border border-cyan-300/30" />
-                                                                <div className="absolute inset-10 rounded-full border border-white/10 bg-cyan-300/8 [transform:translateZ(-18px)]" />
-                                                                <div className="absolute inset-x-10 bottom-8 h-8 rounded-full bg-cyan-400/18 blur-xl [transform:translateZ(-24px)]" />
-                                                                <ArrowUp className="size-24 drop-shadow-[0_12px_26px_rgba(14,165,233,0.55)] [transform:translateZ(28px)] sm:size-32" />
-                                                            </div>
-                                                            <div className="mt-6 rounded-[24px] border border-white/10 bg-slate-950/62 px-5 py-4 text-center text-white backdrop-blur-md shadow-[0_18px_40px_rgba(15,23,42,0.22)]">
-                                                                <p className="text-lg font-semibold">
-                                                                    {
-                                                                        guidanceInstruction
-                                                                    }
-                                                                </p>
-                                                                <p className="mt-1 text-sm text-slate-300">
-                                                                    {bearingToCenter ===
-                                                                    null
-                                                                        ? 'Waiting for destination coordinates'
-                                                                        : `Bearing ${compassDirectionLabel(bearingToCenter)} ${Math.round(bearingToCenter)} deg`}
-                                                                </p>
+                                                                {arChevronSteps.map(
+                                                                    (step) => (
+                                                                        <div
+                                                                            key={`ar-chevron-${step}`}
+                                                                            className="relative size-24 sm:size-32"
+                                                                            style={{
+                                                                                transform: `translateZ(${28 + step * 8}px)`,
+                                                                            }}
+                                                                        >
+                                                                            <ChevronRight
+                                                                                className="absolute inset-0 size-full text-blue-600 drop-shadow-[0_18px_28px_rgba(37,99,235,0.42)]"
+                                                                                strokeWidth={
+                                                                                    9
+                                                                                }
+                                                                            />
+                                                                            <ChevronRight
+                                                                                className="absolute inset-0 size-full text-white"
+                                                                                strokeWidth={
+                                                                                    6.5
+                                                                                }
+                                                                            />
+                                                                        </div>
+                                                                    ),
+                                                                )}
                                                             </div>
                                                         </div>
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <div className="absolute inset-x-4 bottom-4 grid gap-3 md:grid-cols-3">
-                                                <div className="rounded-[22px] border border-white/10 bg-slate-950/58 px-4 py-3 text-white backdrop-blur-md">
-                                                    <p className="text-xs font-semibold tracking-[0.18em] text-slate-300 uppercase">
-                                                        Heading
-                                                    </p>
-                                                    <p className="mt-2 text-lg font-semibold">
-                                                        {heading === null
-                                                            ? 'Awaiting compass'
-                                                            : `${compassDirectionLabel(heading)} ${Math.round(heading)} deg`}
-                                                    </p>
+                                            <div className="absolute inset-x-0 bottom-0 h-[255px] overflow-hidden">
+                                                <div className="absolute inset-x-[-8%] -bottom-[112px] h-[300px] rounded-t-[999px] border-[10px] border-white bg-[#dff2e5] shadow-[0_-20px_60px_rgba(15,23,42,0.18)]">
+                                                    <div className="absolute inset-0 opacity-80">
+                                                        {miniMapRoadLines.map(
+                                                            (line) => (
+                                                                <div
+                                                                    key={line}
+                                                                    className={cn(
+                                                                        'absolute rounded-full bg-white/88 shadow-sm',
+                                                                        line,
+                                                                    )}
+                                                                />
+                                                            ),
+                                                        )}
+                                                        <div className="absolute top-[26%] left-[18%] h-2 w-[76%] rotate-[20deg] rounded-full bg-emerald-800/10" />
+                                                        <div className="absolute top-[5%] left-[34%] h-[88%] w-2 rotate-[-8deg] rounded-full bg-emerald-800/10" />
+                                                    </div>
+
+                                                    {miniMapRoutePoints.map(
+                                                        (point, index) => (
+                                                            <span
+                                                                key={`route-dot-${miniMapRouteDots[index]}`}
+                                                                className="absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500 shadow-[0_2px_8px_rgba(37,99,235,0.42)]"
+                                                                style={{
+                                                                    left: `${point.x}%`,
+                                                                    top: `${point.y}%`,
+                                                                }}
+                                                            />
+                                                        ),
+                                                    )}
+
+                                                    <div
+                                                        className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
+                                                        style={{
+                                                            left: `${miniMapDestinationPoint.x}%`,
+                                                            top: `${miniMapDestinationPoint.y}%`,
+                                                        }}
+                                                    >
+                                                        <div className="flex size-12 items-center justify-center rounded-full border-4 border-white bg-blue-600 text-white shadow-[0_12px_24px_rgba(37,99,235,0.34)]">
+                                                            <MapPinned className="size-6" />
+                                                        </div>
+                                                        <div className="max-w-40 rounded-full bg-blue-600 px-3 py-1 text-center text-[11px] font-semibold text-white shadow-sm">
+                                                            Nearest center
+                                                        </div>
+                                                    </div>
+
+                                                    <div
+                                                        className="absolute flex -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-1"
+                                                        style={{
+                                                            left: `${miniMapCurrentPoint.x}%`,
+                                                            top: `${miniMapCurrentPoint.y}%`,
+                                                        }}
+                                                    >
+                                                        <div className="flex size-24 items-center justify-center rounded-full bg-white/86 shadow-[0_16px_35px_rgba(15,23,42,0.16)]">
+                                                            <Navigation className="size-16 fill-blue-500 text-blue-600 drop-shadow-[0_10px_18px_rgba(37,99,235,0.36)]" />
+                                                        </div>
+                                                        <div className="rounded-full bg-white px-4 py-1 text-xs font-bold text-slate-900 shadow-sm">
+                                                            You are here
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                                <div className="rounded-[22px] border border-white/10 bg-slate-950/58 px-4 py-3 text-white backdrop-blur-md">
-                                                    <p className="text-xs font-semibold tracking-[0.18em] text-slate-300 uppercase">
-                                                        Distance
-                                                    </p>
-                                                    <p className="mt-2 text-lg font-semibold">
-                                                        {routeDistanceKm === null
-                                                            ? (nearestCenter?.distanceKm ??
-                                                              'Waiting')
-                                                            : distanceLabel(
-                                                                  routeDistanceKm,
-                                                              )}
-                                                    </p>
+                                            </div>
+
+                                            <div className="absolute inset-x-4 bottom-[190px] flex flex-col items-center gap-3 md:bottom-[210px]">
+                                                <div
+                                                    aria-label="Be alert while walking"
+                                                    className="rounded-full border border-white/86 bg-slate-950/54 px-5 py-3 text-white shadow-[0_12px_34px_rgba(15,23,42,0.28)] backdrop-blur-md"
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <TriangleAlert className="size-5" />
+                                                        <span className="text-base font-semibold">
+                                                            Be alert while
+                                                            walking
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                                <div className="rounded-[22px] border border-white/10 bg-slate-950/58 px-4 py-3 text-white backdrop-blur-md">
-                                                    <p className="text-xs font-semibold tracking-[0.18em] text-slate-300 uppercase">
-                                                        ETA
-                                                    </p>
-                                                    <p className="mt-2 text-lg font-semibold">
-                                                        {routeMinutes === null
-                                                            ? 'Pending'
-                                                            : `${routeMinutes} min`}
-                                                    </p>
+                                                <div className="grid w-full max-w-2xl grid-cols-3 gap-2">
+                                                    <div className="rounded-[8px] bg-white/86 px-3 py-2 text-center text-slate-900 shadow-sm backdrop-blur-md">
+                                                        <p className="text-[10px] font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                                                            Heading
+                                                        </p>
+                                                        <p className="mt-1 text-sm font-bold">
+                                                            {heading === null
+                                                                ? 'Compass'
+                                                                : `${compassDirectionLabel(heading)} ${Math.round(heading)} deg`}
+                                                        </p>
+                                                    </div>
+                                                    <div className="rounded-[8px] bg-white/86 px-3 py-2 text-center text-slate-900 shadow-sm backdrop-blur-md">
+                                                        <p className="text-[10px] font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                                                            Distance
+                                                        </p>
+                                                        <p className="mt-1 text-sm font-bold">
+                                                            {routeDistanceText}
+                                                        </p>
+                                                    </div>
+                                                    <div className="rounded-[8px] bg-white/86 px-3 py-2 text-center text-slate-900 shadow-sm backdrop-blur-md">
+                                                        <p className="text-[10px] font-semibold tracking-[0.16em] text-slate-500 uppercase">
+                                                            ETA
+                                                        </p>
+                                                        <p className="mt-1 text-sm font-bold">
+                                                            {routeEtaText}
+                                                        </p>
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
@@ -1179,9 +1396,10 @@ export default function ResidentEvacuationAr({
                                                             Destination Brief
                                                         </h3>
                                                         <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                                                            The arrow skips full centers
-                                                            when another mapped center
-                                                            still has available slots.
+                                                            The arrow skips full
+                                                            centers when another
+                                                            mapped center still
+                                                            has available slots.
                                                         </p>
                                                     </div>
                                                 </div>
@@ -1191,7 +1409,9 @@ export default function ResidentEvacuationAr({
                                                         <div className="flex items-start justify-between gap-4">
                                                             <div>
                                                                 <p className="text-xl font-semibold text-foreground">
-                                                                    {nearestCenter.name}
+                                                                    {
+                                                                        nearestCenter.name
+                                                                    }
                                                                 </p>
                                                                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
                                                                     {
@@ -1207,7 +1427,9 @@ export default function ResidentEvacuationAr({
                                                                     ),
                                                                 )}
                                                             >
-                                                                {nearestCenter.status}
+                                                                {
+                                                                    nearestCenter.status
+                                                                }
                                                             </span>
                                                         </div>
 
@@ -1291,22 +1513,25 @@ export default function ResidentEvacuationAr({
                                                     </div>
                                                 ) : (
                                                     <div className="mt-6 rounded-[24px] border border-dashed border-slate-300 bg-slate-50/80 px-5 py-8 text-sm leading-7 text-muted-foreground dark:border-slate-700 dark:bg-slate-900/60">
-                                                        No evacuation center is mapped
-                                                        yet for this resident account.
+                                                        No evacuation center is
+                                                        mapped yet for this
+                                                        resident account.
                                                     </div>
                                                 )}
                                             </div>
 
                                             {errorMessages.length > 0 ? (
                                                 <div className="space-y-3">
-                                                    {errorMessages.map((message) => (
-                                                        <div
-                                                            key={message}
-                                                            className="rounded-[22px] border border-amber-300/60 bg-amber-50/90 px-4 py-3 text-sm leading-6 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100"
-                                                        >
-                                                            {message}
-                                                        </div>
-                                                    ))}
+                                                    {errorMessages.map(
+                                                        (message) => (
+                                                            <div
+                                                                key={message}
+                                                                className="rounded-[22px] border border-amber-300/60 bg-amber-50/90 px-4 py-3 text-sm leading-6 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100"
+                                                            >
+                                                                {message}
+                                                            </div>
+                                                        ),
+                                                    )}
                                                 </div>
                                             ) : null}
 
@@ -1340,9 +1565,9 @@ export default function ResidentEvacuationAr({
                                         Update your current location first
                                     </h2>
                                     <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                                        Tap My location so the guide refreshes from
-                                        your exact GPS position before the AR
-                                        workspace appears.
+                                        Tap My location so the guide refreshes
+                                        from your exact GPS position before the
+                                        AR workspace appears.
                                     </p>
 
                                     <div className="mt-5 grid gap-3 lg:grid-cols-2">
@@ -1351,11 +1576,13 @@ export default function ResidentEvacuationAr({
                                                 Saved Pin
                                             </p>
                                             <p className="mt-3 text-lg font-semibold text-foreground">
-                                                {arGuide.currentLocation?.label ??
+                                                {arGuide.currentLocation
+                                                    ?.label ??
                                                     'No saved household pin'}
                                             </p>
                                             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                                                {arGuide.currentLocation?.address ??
+                                                {arGuide.currentLocation
+                                                    ?.address ??
                                                     'Update your resident details so the guide keeps a backup home location.'}
                                             </p>
                                         </div>
@@ -1367,9 +1594,10 @@ export default function ResidentEvacuationAr({
                                                 Tap My location
                                             </p>
                                             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                                                Once a live GPS lock is captured, the
-                                                route map and camera-based AR
-                                                workspace will unlock.
+                                                Once a live GPS lock is
+                                                captured, the route map and
+                                                camera-based AR workspace will
+                                                unlock.
                                             </p>
                                         </div>
                                     </div>
