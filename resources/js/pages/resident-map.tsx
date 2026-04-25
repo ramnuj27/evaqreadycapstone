@@ -109,7 +109,9 @@ export default function ResidentMap({ mapData }: ResidentMapProps) {
         })),
     ];
     const selectedBarangay =
-        mapData.currentLocation?.barangay ?? mapData.nearestCenter?.barangay ?? null;
+        mapData.currentLocation?.barangay ??
+        mapData.nearestCenter?.barangay ??
+        null;
 
     return (
         <>
@@ -307,7 +309,10 @@ export default function ResidentMap({ mapData }: ResidentMapProps) {
                                                     {mapData.nearestCenter.name}
                                                 </p>
                                                 <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                                                    {mapData.nearestCenter.address}
+                                                    {
+                                                        mapData.nearestCenter
+                                                            .address
+                                                    }
                                                 </p>
                                             </div>
 

@@ -75,6 +75,20 @@ type CameraPerspective = {
     pitch: number;
 };
 
+type FallbackMapTile = {
+    key: string;
+    url: string;
+};
+
+type FallbackMapMarker = InteractiveMapMarker & {
+    offsetX: number;
+    offsetY: number;
+};
+
+const fallbackTileOffsets = [-2, -1, 0, 1, 2] as const;
+const fallbackTileSize = 256;
+const fallbackTileCenterIndex = Math.floor(fallbackTileOffsets.length / 2);
+
 function markerPixelSize(size: MapboxOverlayMarker['size'] = 'small'): number {
     switch (size) {
         case 'large':
@@ -126,6 +140,99 @@ function validPoints(points: MapboxPoint[]): MapboxPoint[] {
         (point) =>
             Number.isFinite(point.latitude) && Number.isFinite(point.longitude),
     );
+}
+
+function normalizedLongitude(longitude: number): number {
+    return ((((longitude + 180) % 360) + 360) % 360) - 180;
+}
+
+function longitudeToTileX(longitude: number, zoom: number): number {
+    return ((normalizedLongitude(longitude) + 180) / 360) * 2 ** zoom;
+}
+
+function latitudeToTileY(latitude: number, zoom: number): number {
+    const latitudeRadians = (clampLatitude(latitude) * Math.PI) / 180;
+
+    return (
+        ((1 -
+            Math.log(
+                Math.tan(latitudeRadians) + 1 / Math.cos(latitudeRadians),
+            ) /
+                Math.PI) /
+            2) *
+        2 ** zoom
+    );
+}
+
+function openStreetMapTileUrl(x: number, y: number, zoom: number): string {
+    const tileCount = 2 ** zoom;
+    const wrappedX = ((x % tileCount) + tileCount) % tileCount;
+    const clampedY = Math.min(Math.max(y, 0), tileCount - 1);
+
+    return `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${clampedY}.png`;
+}
+
+function fallbackTileZoom(
+    viewport: NonNullable<ReturnType<typeof fitMapViewport>>,
+): number {
+    return Math.min(Math.max(Math.round(viewport.zoom + 1), 10), 16);
+}
+
+function fallbackMapTiles(
+    viewport: NonNullable<ReturnType<typeof fitMapViewport>>,
+): {
+    offsetX: number;
+    offsetY: number;
+    tiles: FallbackMapTile[];
+    zoom: number;
+} {
+    const zoom = fallbackTileZoom(viewport);
+    const tileX = longitudeToTileX(viewport.longitude, zoom);
+    const tileY = latitudeToTileY(viewport.latitude, zoom);
+    const centerTileX = Math.floor(tileX);
+    const centerTileY = Math.floor(tileY);
+
+    return {
+        offsetX: (tileX - centerTileX) * fallbackTileSize,
+        offsetY: (tileY - centerTileY) * fallbackTileSize,
+        tiles: fallbackTileOffsets.flatMap((yOffset) =>
+            fallbackTileOffsets.map((xOffset) => {
+                const x = centerTileX + xOffset;
+                const y = centerTileY + yOffset;
+
+                return {
+                    key: `${zoom}-${x}-${y}`,
+                    url: openStreetMapTileUrl(x, y, zoom),
+                };
+            }),
+        ),
+        zoom,
+    };
+}
+
+function fallbackMarkerPositions(
+    markers: InteractiveMapMarker[],
+    viewport: NonNullable<ReturnType<typeof fitMapViewport>>,
+    zoom: number,
+): FallbackMapMarker[] {
+    const centerX = longitudeToTileX(viewport.longitude, zoom);
+    const centerY = latitudeToTileY(viewport.latitude, zoom);
+
+    return markers
+        .filter(
+            (marker) =>
+                Number.isFinite(marker.latitude) &&
+                Number.isFinite(marker.longitude),
+        )
+        .map((marker) => ({
+            ...marker,
+            offsetX:
+                (longitudeToTileX(marker.longitude, zoom) - centerX) *
+                fallbackTileSize,
+            offsetY:
+                (latitudeToTileY(marker.latitude, zoom) - centerY) *
+                fallbackTileSize,
+        }));
 }
 
 function pointsBounds(points: MapboxPoint[]): mapboxgl.LngLatBounds | null {
@@ -380,6 +487,20 @@ export function InteractiveMapboxStaticMap({
         userLocationMarker === null
             ? markers
             : [...markers, userLocationMarker];
+    const fallbackLayer =
+        defaultViewport === null ? null : fallbackMapTiles(defaultViewport);
+    const fallbackLayerTransform =
+        fallbackLayer === null
+            ? ''
+            : `translate(-${(fallbackTileCenterIndex * fallbackTileSize + fallbackLayer.offsetX).toFixed(1)}px, -${(fallbackTileCenterIndex * fallbackTileSize + fallbackLayer.offsetY).toFixed(1)}px)`;
+    const fallbackMarkers =
+        defaultViewport === null || fallbackLayer === null
+            ? []
+            : fallbackMarkerPositions(
+                  activeMarkers,
+                  defaultViewport,
+                  fallbackLayer.zoom,
+              );
 
     useEffect(() => {
         if (defaultViewport === null) {
@@ -404,7 +525,7 @@ export function InteractiveMapboxStaticMap({
 
         if (!mapboxAccessToken) {
             setMapError(
-                'Mapbox access token is missing. Add VITE_MAPBOX_ACCESS_TOKEN to load the live map.',
+                'OpenStreetMap backup preview is active because the Mapbox token is missing.',
             );
 
             return;
@@ -732,12 +853,7 @@ export function InteractiveMapboxStaticMap({
         );
 
         setLocationMessage(null);
-    }, [
-        defaultViewport?.zoom,
-        isMapLoaded,
-        points,
-        selectedBarangay,
-    ]);
+    }, [defaultViewport?.zoom, isMapLoaded, points, selectedBarangay]);
 
     useEffect(() => {
         const map = mapRef.current;
@@ -880,9 +996,6 @@ export function InteractiveMapboxStaticMap({
         );
     }
 
-    const hasBlockingMapError =
-        mapError !== null && mapError !== backupPreviewMessage;
-
     return (
         <div
             aria-label={ariaLabel}
@@ -892,6 +1005,58 @@ export function InteractiveMapboxStaticMap({
             )}
             role="region"
         >
+            {fallbackLayer ? (
+                <div
+                    aria-hidden="true"
+                    className="absolute inset-0 overflow-hidden bg-slate-100 dark:bg-slate-900"
+                >
+                    <div
+                        className="absolute top-1/2 left-1/2 grid grid-cols-5 opacity-95 saturate-[1.04] dark:opacity-80"
+                        style={{
+                            transform: fallbackLayerTransform,
+                        }}
+                    >
+                        {fallbackLayer.tiles.map((tile) => (
+                            <img
+                                key={tile.key}
+                                alt=""
+                                className="size-64 max-w-none"
+                                loading="eager"
+                                referrerPolicy="no-referrer"
+                                src={tile.url}
+                            />
+                        ))}
+                    </div>
+
+                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(248,250,252,0.04),rgba(15,23,42,0.10))] dark:bg-[linear-gradient(180deg,rgba(2,6,23,0.18),rgba(2,6,23,0.32))]" />
+
+                    {fallbackMarkers.map((marker, index) => {
+                        const size = markerPixelSize(marker.size);
+
+                        return (
+                            <div
+                                key={`${marker.label ?? marker.id ?? 'marker'}-${index}`}
+                                aria-label={marker.label}
+                                className={cn(
+                                    'absolute z-[1] flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white text-[10px] font-bold text-white shadow-[0_10px_24px_rgba(15,23,42,0.28)]',
+                                    marker.selected && 'ring-4 ring-white/40',
+                                )}
+                                style={{
+                                    backgroundColor: marker.color ?? '#2563eb',
+                                    height: size,
+                                    left: `calc(50% + ${marker.offsetX.toFixed(1)}px)`,
+                                    top: `calc(50% + ${marker.offsetY.toFixed(1)}px)`,
+                                    width: size,
+                                }}
+                                title={marker.label}
+                            >
+                                {marker.symbol}
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : null}
+
             <div className="absolute inset-0">
                 <MapboxStaticMap markers={activeMarkers} points={points} />
             </div>
@@ -920,19 +1085,6 @@ export function InteractiveMapboxStaticMap({
                     <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/92 px-4 py-2 text-sm font-semibold text-foreground shadow-lg backdrop-blur dark:border-slate-800/90 dark:bg-slate-950/88">
                         <LoaderCircle className="size-4 animate-spin" />
                         Loading map...
-                    </div>
-                </div>
-            ) : null}
-
-            {hasBlockingMapError ? (
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/90 px-6 text-center">
-                    <div className="max-w-md space-y-2">
-                        <p className="text-sm font-semibold text-foreground">
-                            Interactive map unavailable.
-                        </p>
-                        <p className="text-sm leading-6 text-muted-foreground">
-                            {mapError}
-                        </p>
                     </div>
                 </div>
             ) : null}

@@ -191,6 +191,25 @@ test('resident pages render household specific data', function () {
             ->component('resident-disaster-info'));
 });
 
+test('resident map keeps center markers visible before household setup', function () {
+    $resident = User::factory()->create([
+        'email_verified_at' => now(),
+        'name' => 'Junmar Casano',
+        'role' => 'Resident',
+    ]);
+
+    $this->actingAs($resident)
+        ->get(route('resident.map'))
+        ->assertOk()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('resident-map')
+            ->has('mapData.centers', 3)
+            ->where('mapData.centers.0.name', 'Central Evacuation Center')
+            ->where('mapData.currentLocation', null)
+            ->where('mapData.nearestCenter.name', 'Central Evacuation Center')
+            ->where('mapData.route', null));
+});
+
 test('resident can update their profile and household details', function () {
     [$resident, $household] = residentAccountContext();
 
@@ -282,6 +301,9 @@ test('resident can manage household members', function () {
 
 test('resident map page restores the interactive map preview', function () {
     $pageFile = file_get_contents(resource_path('js/pages/resident-map.tsx'));
+    $mapComponentFile = file_get_contents(
+        resource_path('js/components/interactive-mapbox-static-map.tsx'),
+    );
 
     expect($pageFile)
         ->not->toBeFalse()
@@ -304,6 +326,14 @@ test('resident map page restores the interactive map preview', function () {
             'handleMapPointerDown',
             'handleMapPointerMove',
             'handleMapPointerEnd',
+        );
+
+    expect($mapComponentFile)
+        ->not->toBeFalse()
+        ->and($mapComponentFile)
+        ->toContain(
+            'tile.openstreetmap.org',
+            'OpenStreetMap backup preview',
         );
 });
 

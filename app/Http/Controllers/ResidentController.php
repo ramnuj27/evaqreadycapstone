@@ -22,8 +22,7 @@ class ResidentController extends Controller
 {
     public function __construct(
         private readonly HouseholdQrCode $householdQrCode,
-    ) {
-    }
+    ) {}
 
     public function dashboard(Request $request): Response
     {
@@ -112,7 +111,7 @@ class ResidentController extends Controller
     public function map(Request $request): Response
     {
         $household = $this->residentHousehold($request->user());
-        $centers = $this->evacuationCenterDirectory($household);
+        $centers = $this->residentMapCenterDirectory($household);
         $currentLocation = $this->currentLocationPayload($household);
         $nearestCenter = $centers[0] ?? null;
 
@@ -439,6 +438,40 @@ class ResidentController extends Controller
      *     y: int
      * }>
      */
+    private function residentMapCenterDirectory(?Household $household): array
+    {
+        $centers = $this->evacuationCenterDirectory($household);
+
+        if ($centers !== []) {
+            return $centers;
+        }
+
+        return $this->evacuationCenterDirectoryForBarangays([
+            'Central',
+            'Dahican',
+            'Badas',
+        ]);
+    }
+
+    /**
+     * @return array<int, array{
+     *     address: string,
+     *     availableSlots: int,
+     *     barangay: string,
+     *     capacity: int,
+     *     contact: string,
+     *     distanceKm: string,
+     *     etaMinutes: int,
+     *     isNearest: bool,
+     *     latitude: float,
+     *     longitude: float,
+     *     name: string,
+     *     occupied: int,
+     *     status: string,
+     *     x: int,
+     *     y: int
+     * }>
+     */
     private function evacuationCenterDirectory(?Household $household): array
     {
         if ($household === null) {
@@ -452,13 +485,43 @@ class ResidentController extends Controller
             'Badas',
             'Macambol',
         ])->filter()->unique()->take(3)->values();
+
+        return $this->evacuationCenterDirectoryForBarangays($barangays);
+    }
+
+    /**
+     * @param  iterable<int, string>  $barangays
+     * @return array<int, array{
+     *     address: string,
+     *     availableSlots: int,
+     *     barangay: string,
+     *     capacity: int,
+     *     contact: string,
+     *     distanceKm: string,
+     *     etaMinutes: int,
+     *     isNearest: bool,
+     *     latitude: float,
+     *     longitude: float,
+     *     name: string,
+     *     occupied: int,
+     *     status: string,
+     *     x: int,
+     *     y: int
+     * }>
+     */
+    private function evacuationCenterDirectoryForBarangays(
+        iterable $barangays,
+    ): array {
         $capacityByIndex = [220, 180, 140];
         $occupiedByIndex = [78, 134, 56];
         $statusByIndex = ['Open', 'Near Full', 'Open'];
         $distanceByIndex = ['1.8 km', '3.2 km', '5.1 km'];
         $etaByIndex = [12, 18, 27];
 
-        return $barangays->map(function (string $barangay, int $index) use (
+        return collect($barangays)->values()->map(function (
+            string $barangay,
+            int $index,
+        ) use (
             $capacityByIndex,
             $distanceByIndex,
             $etaByIndex,
