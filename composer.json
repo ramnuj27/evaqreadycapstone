@@ -71,9 +71,7 @@
             "@php artisan test"
         ],
         "vercel": [
-            "@php artisan config:clear --ansi",
-            "npm ci --include=dev",
-            "npm run build"
+            "@php artisan config:clear --ansi"
         ],
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",

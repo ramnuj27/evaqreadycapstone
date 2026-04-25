@@ -60,11 +60,8 @@ test('vercel deployment config targets the php runtime and builds frontend asset
         ->toHaveKey('vercel');
 
     expect($composerConfig['scripts']['vercel'])
-        ->toContain(
-            '@php artisan config:clear --ansi',
-            'npm ci --include=dev',
-            'npm run build',
-        );
+        ->toBe(['@php artisan config:clear --ansi'])
+        ->not->toContain('npm run build');
 });
 
 test('vite build config does not depend on the wayfinder vite plugin', function () {
