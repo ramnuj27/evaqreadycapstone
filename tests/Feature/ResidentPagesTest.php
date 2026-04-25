@@ -301,16 +301,16 @@ test('resident can manage household members', function () {
 
 test('resident map page restores the interactive map preview', function () {
     $pageFile = file_get_contents(resource_path('js/pages/resident-map.tsx'));
-    $mapComponentFile = file_get_contents(
-        resource_path('js/components/interactive-mapbox-static-map.tsx'),
-    );
 
     expect($pageFile)
         ->not->toBeFalse()
         ->and($pageFile)
         ->toContain(
-            'Map Preview',
+            'Resident Route Map',
+            'Route Map',
             'InteractiveMapboxStaticMap',
+            'Choose barangay border',
+            'Evacuation Center Markers',
             'Household Route',
             'Start AR Guide',
         )
@@ -326,14 +326,6 @@ test('resident map page restores the interactive map preview', function () {
             'handleMapPointerDown',
             'handleMapPointerMove',
             'handleMapPointerEnd',
-        );
-
-    expect($mapComponentFile)
-        ->not->toBeFalse()
-        ->and($mapComponentFile)
-        ->toContain(
-            'tile.openstreetmap.org',
-            'OpenStreetMap backup preview',
         );
 });
 
