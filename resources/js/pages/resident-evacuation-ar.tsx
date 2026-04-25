@@ -17,6 +17,11 @@ import {
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
+    MapboxStaticMap,
+    type MapboxOverlayMarker,
+    type MapboxPoint,
+} from '@/components/mapbox-static-map';
+import {
     bearingBetween,
     compassDirectionLabel,
     distanceKmBetween,
@@ -87,10 +92,42 @@ const arChevronSteps = [0, 1, 2] as const;
 const depthGridLines = [0, 1, 2, 3, 4] as const;
 const depthVerticalLines = [0, 1, 2] as const;
 const miniMapRouteDots = [0, 1, 2, 3, 4, 5, 6, 7] as const;
+const miniMapBlocks = [
+    'left-[5%] top-[9%] h-20 w-36 rotate-[-18deg] rounded-[18px] bg-emerald-100/78',
+    'left-[32%] top-[4%] h-24 w-44 rotate-[10deg] rounded-[22px] bg-lime-100/72',
+    'right-[8%] top-[9%] h-20 w-40 rotate-[-8deg] rounded-[18px] bg-slate-50/86',
+    'left-[10%] top-[47%] h-20 w-48 rotate-[12deg] rounded-[20px] bg-white/78',
+    'right-[18%] top-[48%] h-24 w-44 rotate-[-14deg] rounded-[22px] bg-emerald-100/72',
+] as const;
 const miniMapRoadLines = [
-    'left-[8%] top-[30%] h-1 w-[45%] -rotate-[18deg]',
-    'left-[28%] top-[55%] h-1 w-[60%] rotate-[8deg]',
-    'left-[58%] top-[22%] h-1 w-[38%] rotate-[62deg]',
+    'left-[-8%] top-[28%] h-3 w-[76%] rotate-[-18deg]',
+    'left-[22%] top-[56%] h-3 w-[76%] rotate-[8deg]',
+    'left-[58%] top-[15%] h-3 w-[50%] rotate-[63deg]',
+    'left-[2%] top-[76%] h-2 w-[70%] rotate-[-4deg]',
+] as const;
+const miniMapMinorRoadLines = [
+    'left-[4%] top-[12%] h-1.5 w-[48%] rotate-[-28deg]',
+    'left-[28%] top-[36%] h-1.5 w-[46%] rotate-[9deg]',
+    'left-[66%] top-[34%] h-1.5 w-[38%] rotate-[-15deg]',
+    'left-[22%] top-[10%] h-1.5 w-[55%] rotate-[64deg]',
+] as const;
+const miniMapWaterShapes = [
+    'right-[-5%] top-[32%] h-24 w-48 rotate-[-10deg] rounded-[60%] bg-sky-200/78',
+    'left-[-7%] top-[62%] h-20 w-36 rotate-[12deg] rounded-[55%] bg-cyan-100/72',
+] as const;
+const miniMapRoadLabels = [
+    {
+        className: 'left-[34%] top-[23%] rotate-[-18deg]',
+        label: 'Dahican Road',
+    },
+    {
+        className: 'right-[13%] top-[47%] rotate-[63deg]',
+        label: 'Barangay Access',
+    },
+    {
+        className: 'left-[17%] top-[66%] rotate-[-4deg]',
+        label: 'Coastal Route',
+    },
 ] as const;
 
 function formatCount(value: number): string {
@@ -635,6 +672,46 @@ export default function ResidentEvacuationAr({
     const guidanceSource =
         location === null ? 'Waiting for My location' : 'Live GPS lock';
     const hasLiveLocation = location !== null;
+    const miniMapMapPoints: MapboxPoint[] = [
+        ...(guidancePosition === null
+            ? []
+            : [
+                  {
+                      latitude: guidancePosition.latitude,
+                      longitude: guidancePosition.longitude,
+                  },
+              ]),
+        ...(nearestCenter === null
+            ? []
+            : [
+                  {
+                      latitude: nearestCenter.latitude,
+                      longitude: nearestCenter.longitude,
+                  },
+              ]),
+    ];
+    const miniMapMapMarkers: MapboxOverlayMarker[] = [
+        ...(guidancePosition === null
+            ? []
+            : [
+                  {
+                      color: '#2563eb',
+                      latitude: guidancePosition.latitude,
+                      longitude: guidancePosition.longitude,
+                      size: 'large' as const,
+                  },
+              ]),
+        ...(nearestCenter === null
+            ? []
+            : [
+                  {
+                      color: '#16a34a',
+                      latitude: nearestCenter.latitude,
+                      longitude: nearestCenter.longitude,
+                      size: 'medium' as const,
+                  },
+              ]),
+    ];
     const isLocating = locationState === 'locating';
     const hasTiltData = devicePitch !== null || deviceRoll !== null;
     const overlayPitch = clamp(devicePitch ?? 0, -40, 40);
@@ -667,7 +744,7 @@ export default function ResidentEvacuationAr({
               };
     const miniMapCurrentPoint = {
         x: 50,
-        y: 70,
+        y: 62,
     };
     const miniMapDestinationPoint = (() => {
         if (bearingToCenter !== null) {
@@ -680,9 +757,9 @@ export default function ResidentEvacuationAr({
                     82,
                 ),
                 y: clamp(
-                    miniMapCurrentPoint.y - Math.cos(bearingRadians) * 42,
+                    miniMapCurrentPoint.y - Math.cos(bearingRadians) * 38,
                     16,
-                    70,
+                    58,
                 ),
             };
         }
@@ -699,7 +776,7 @@ export default function ResidentEvacuationAr({
                     miniMapCurrentPoint.y +
                         (savedDestinationPoint.y - savedCurrentPoint.y) * 0.55,
                     16,
-                    70,
+                    58,
                 ),
             };
         }
@@ -1278,22 +1355,99 @@ export default function ResidentEvacuationAr({
                                                 </div>
                                             </div>
 
-                                            <div className="absolute inset-x-0 bottom-0 h-[255px] overflow-hidden">
-                                                <div className="absolute inset-x-[-8%] -bottom-[112px] h-[300px] rounded-t-[999px] border-[10px] border-white bg-[#dff2e5] shadow-[0_-20px_60px_rgba(15,23,42,0.18)]">
-                                                    <div className="absolute inset-0 opacity-80">
+                                            <div className="absolute inset-x-0 bottom-0 h-[300px] overflow-hidden">
+                                                <div className="absolute inset-x-[-7%] -bottom-[82px] h-[340px] overflow-hidden rounded-t-[999px] border-[10px] border-white bg-[#dff2e5] shadow-[0_-20px_60px_rgba(15,23,42,0.18)]">
+                                                    <div
+                                                        aria-hidden="true"
+                                                        className="absolute inset-0 bg-[#dff2e5]"
+                                                    >
+                                                        {miniMapBlocks.map(
+                                                            (block) => (
+                                                                <div
+                                                                    key={block}
+                                                                    className={cn(
+                                                                        'absolute shadow-[inset_0_0_0_1px_rgba(16,185,129,0.10)]',
+                                                                        block,
+                                                                    )}
+                                                                />
+                                                            ),
+                                                        )}
+                                                        {miniMapWaterShapes.map(
+                                                            (shape) => (
+                                                                <div
+                                                                    key={shape}
+                                                                    className={cn(
+                                                                        'absolute shadow-[inset_0_0_0_2px_rgba(255,255,255,0.36)]',
+                                                                        shape,
+                                                                    )}
+                                                                />
+                                                            ),
+                                                        )}
                                                         {miniMapRoadLines.map(
                                                             (line) => (
                                                                 <div
                                                                     key={line}
                                                                     className={cn(
-                                                                        'absolute rounded-full bg-white/88 shadow-sm',
+                                                                        'absolute rounded-full bg-white shadow-[0_1px_5px_rgba(15,23,42,0.14)]',
                                                                         line,
                                                                     )}
                                                                 />
                                                             ),
                                                         )}
-                                                        <div className="absolute top-[26%] left-[18%] h-2 w-[76%] rotate-[20deg] rounded-full bg-emerald-800/10" />
-                                                        <div className="absolute top-[5%] left-[34%] h-[88%] w-2 rotate-[-8deg] rounded-full bg-emerald-800/10" />
+                                                        {miniMapMinorRoadLines.map(
+                                                            (line) => (
+                                                                <div
+                                                                    key={line}
+                                                                    className={cn(
+                                                                        'absolute rounded-full bg-white/84 shadow-sm',
+                                                                        line,
+                                                                    )}
+                                                                />
+                                                            ),
+                                                        )}
+                                                        <div className="absolute top-[26%] left-[18%] h-2 w-[76%] rotate-[20deg] rounded-full bg-emerald-800/12" />
+                                                        <div className="absolute top-[5%] left-[34%] h-[88%] w-2 rotate-[-8deg] rounded-full bg-emerald-800/12" />
+                                                        <div className="absolute right-[10%] bottom-[26%] rounded-full bg-sky-200/90 px-3 py-1 text-[10px] font-semibold tracking-[0.16em] text-sky-900 uppercase shadow-sm">
+                                                            Mayo Bay
+                                                        </div>
+                                                        {miniMapRoadLabels.map(
+                                                            (road) => (
+                                                                <div
+                                                                    key={
+                                                                        road.label
+                                                                    }
+                                                                    className={cn(
+                                                                        'absolute rounded-full bg-white/72 px-2 py-0.5 text-[10px] font-semibold text-slate-500 shadow-sm',
+                                                                        road.className,
+                                                                    )}
+                                                                >
+                                                                    {road.label}
+                                                                </div>
+                                                            ),
+                                                        )}
+                                                    </div>
+
+                                                    <MapboxStaticMap
+                                                        className="scale-110 [object-position:center_54%] opacity-95 contrast-[1.02] saturate-[1.08]"
+                                                        markers={
+                                                            miniMapMapMarkers
+                                                        }
+                                                        points={
+                                                            miniMapMapPoints
+                                                        }
+                                                    />
+
+                                                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.10)_0%,rgba(255,255,255,0.03)_45%,rgba(255,255,255,0.22)_100%)]" />
+
+                                                    <div
+                                                        aria-hidden="true"
+                                                        className="absolute top-[14%] left-6 flex size-10 items-center justify-center rounded-full border border-slate-200 bg-white/92 text-blue-600 shadow-[0_8px_22px_rgba(15,23,42,0.16)]"
+                                                    >
+                                                        <MapPinned className="size-5" />
+                                                    </div>
+
+                                                    <div className="absolute top-[9%] right-[10%] rounded-full bg-white/88 px-3 py-1 text-xs font-bold text-slate-700 shadow-sm">
+                                                        Route overview
                                                     </div>
 
                                                     {miniMapRoutePoints.map(
@@ -1316,10 +1470,10 @@ export default function ResidentEvacuationAr({
                                                             top: `${miniMapDestinationPoint.y}%`,
                                                         }}
                                                     >
-                                                        <div className="flex size-12 items-center justify-center rounded-full border-4 border-white bg-blue-600 text-white shadow-[0_12px_24px_rgba(37,99,235,0.34)]">
+                                                        <div className="flex size-12 items-center justify-center rounded-full border-4 border-white bg-green-600 text-white shadow-[0_12px_24px_rgba(22,163,74,0.34)]">
                                                             <MapPinned className="size-6" />
                                                         </div>
-                                                        <div className="max-w-40 rounded-full bg-blue-600 px-3 py-1 text-center text-[11px] font-semibold text-white shadow-sm">
+                                                        <div className="max-w-40 rounded-full bg-green-600 px-3 py-1 text-center text-[11px] font-semibold text-white shadow-sm">
                                                             Nearest center
                                                         </div>
                                                     </div>
@@ -1331,7 +1485,7 @@ export default function ResidentEvacuationAr({
                                                             top: `${miniMapCurrentPoint.y}%`,
                                                         }}
                                                     >
-                                                        <div className="flex size-24 items-center justify-center rounded-full bg-white/86 shadow-[0_16px_35px_rgba(15,23,42,0.16)]">
+                                                        <div className="flex size-24 items-center justify-center rounded-full bg-white/90 shadow-[0_16px_35px_rgba(15,23,42,0.16)]">
                                                             <Navigation className="size-16 fill-blue-500 text-blue-600 drop-shadow-[0_10px_18px_rgba(37,99,235,0.36)]" />
                                                         </div>
                                                         <div className="rounded-full bg-white px-4 py-1 text-xs font-bold text-slate-900 shadow-sm">
@@ -1341,7 +1495,7 @@ export default function ResidentEvacuationAr({
                                                 </div>
                                             </div>
 
-                                            <div className="absolute inset-x-4 bottom-[190px] flex flex-col items-center gap-3 md:bottom-[210px]">
+                                            <div className="absolute inset-x-4 bottom-[230px] flex flex-col items-center gap-3 md:bottom-[248px]">
                                                 <div
                                                     aria-label="Be alert while walking"
                                                     className="rounded-full border border-white/86 bg-slate-950/54 px-5 py-3 text-white shadow-[0_12px_34px_rgba(15,23,42,0.28)] backdrop-blur-md"
